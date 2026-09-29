@@ -1,0 +1,14 @@
+name: pvels
+root: data/kaggle_data/PVEL_S
+image_dir: defect
+mask_dir: label
+image_glob: "*.jpg"
+mask_suffix: _mask
+
+split_mode: predefined
+tile: 512
+stride: 256
+
+epochs: 50
+batch_size: 8
+encoder: resnet34
