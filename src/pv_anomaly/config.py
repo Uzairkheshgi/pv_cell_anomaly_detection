@@ -17,7 +17,7 @@ class Config:
     device: str = "auto"
 
     # data
-    root: Path = Path("data/kaggle_data/PVEL_S")
+    root: Path = Path("data/pv_kaggle/PVEL_S")
     splits: tuple[str, ...] = ("train", "test")
     image_dir: str = "defect"
     mask_dir: str = "label"

@@ -263,7 +263,12 @@ class Tiles(Dataset):
         """
         self.records, self.cfg, self.train = records, cfg, train
         self.transform = augmentations(train)
+        # Masks we have already loaded, kept by image id so we do not read the
+        # same file twice. Only the most recent ones are kept, because each
+        # mask is about 1 MB.
         self._masks: dict[str, np.ndarray] = {}
+        # One entry per tile, saying which image it comes from and where to cut
+        # it: (image number, top, left).
         self.tiles: list[tuple[int, int, int]] = []
         self.defect: list[int] = []
         for i, record in enumerate(records):
@@ -274,15 +279,14 @@ class Tiles(Dataset):
                 self.tiles.append((i, y, x))
 
     def mask(self, record: Record) -> np.ndarray:
-        """Load a mask as 0 for background and 1 for defect.
+        """Get one image's mask, as 0 for background and 1 for defect.
 
-        Mask files differ between dataset copies: some store 0 and 1, others 0
-        and 255 as lossy JPEG. Thresholding stops JPEG smudge around an edge from
-        counting as defect. Recently used masks are cached, up to
-        `cfg.mask_cache` of them.
+        The files hold 0 and 255 (or 0 and 1), so this builds the 0/1 version
+        rather than handing back what is on disk. Read once, then kept in
+        memory; the oldest is dropped once `cfg.mask_cache` are held.
 
         Args:
-            record: The pair whose mask to load.
+            record: The pair whose mask to get.
 
         Returns:
             A uint8 array of 0s and 1s.
@@ -294,9 +298,9 @@ class Tiles(Dataset):
             raw = cv2.imread(str(record.mask), cv2.IMREAD_GRAYSCALE)
             if raw is None:
                 raise FileNotFoundError(record.mask)
-            # Encodings vary by mirror: 0/1 PNG label maps and lossy 0/255 JPEG
-            # both occur. A fixed `> 0` turns JPEG ringing into defect pixels;
-            # a fixed `> 127` erases a 0/1 label map. Decide per file.
+            # Mask files come in two styles: 0 and 1, or 0 and 255. The 0/255
+            # ones are JPEGs with grey smudge round every edge that we must
+            # ignore, but that same cut-off would wipe a 0/1 file clean.
             threshold = 0 if raw.max() <= 1 else self.cfg.mask_threshold
             if len(self._masks) >= self.cfg.mask_cache:
                 del self._masks[next(iter(self._masks))]
