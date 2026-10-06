@@ -13,14 +13,16 @@ import torch.nn.functional as F
 from torch import nn
 
 
-def median_frequency_weights(counts, clip: float = 20.0) -> torch.Tensor:
+def median_frequency_weights(
+    pixel_counts: np.ndarray, clip: float = 20.0
+) -> torch.Tensor:
     """Work out how much each class should count for in the loss.
 
     A class holding few pixels gets a large weight, so missing it hurts more than
     missing a common one. Classes with no pixels get 0 rather than infinity.
 
     Args:
-        counts: Pixel count per class.
+        pixel_counts: Pixel count per class.
         clip: Largest allowed weight. Without it, a class holding 0.01% of pixels
             would produce a gradient big enough to destabilise early training.
 
@@ -30,10 +32,10 @@ def median_frequency_weights(counts, clip: float = 20.0) -> torch.Tensor:
     Raises:
         ValueError: If every count is zero.
     """
-    freq = np.asarray(counts, dtype=float)
-    if freq.sum() <= 0:
+    counts = np.asarray(pixel_counts, dtype=float)
+    if counts.sum() <= 0:
         raise ValueError("class counts are all zero")
-    freq = freq / freq.sum()
+    freq = counts / counts.sum()
     weights = np.zeros_like(freq)
     present = freq > 0
     weights[present] = np.median(freq[present]) / freq[present]
@@ -54,7 +56,7 @@ class CEDiceLoss(nn.Module):
 
         Args:
             num_classes: Number of pixel classes.
-            weights: Per-class weights for cross-entropy, or None for equal.
+            weights: Per-class weights for cross-entropy, or None for equal. (calculated by `median_frequency_weights`).
             alpha: Share of cross-entropy. 0.5 means half each.
 
         Raises:

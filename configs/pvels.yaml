@@ -1,5 +1,5 @@
 name: pvels
-root: data/kaggle_data/PVEL_S
+root: data/pv_kaggle/PVEL_S
 image_dir: defect
 mask_dir: label
 image_glob: "*.jpg"
