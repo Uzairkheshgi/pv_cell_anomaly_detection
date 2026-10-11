@@ -1,0 +1,14 @@
+# Fast CPU sanity run on real data. Proves the pipeline; the numbers mean nothing.
+name: cpu_smoke
+root: data/pv_kaggle/PVEL_S
+device: cpu
+max_images: 60
+tile: 256
+stride: 256
+val_frac: 0.2
+
+epochs: 2
+batch_size: 4
+num_workers: 2
+patience: 5
+encoder: resnet18

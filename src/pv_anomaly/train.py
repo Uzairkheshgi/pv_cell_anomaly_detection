@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -42,7 +43,8 @@ def resolve_device(name: str) -> torch.device:
 
 
 def subsample(records, cfg):
-    """Cut the image list down for quick runs, keeping every split present.
+    """used only for quick experiments, to reduce the number of images used.
+    Cut the image list down for quick runs, keeping every split present.
 
     Args:
         records: All image/mask pairs.
@@ -55,8 +57,12 @@ def subsample(records, cfg):
     """
     if not cfg.max_images:
         return records
-    keep = max(1, cfg.max_images // len(cfg.splits))
-    return [r for s in cfg.splits for r in [x for x in records if x.split == s][:keep]]
+    per_split = max(1, cfg.max_images // len(cfg.splits))
+    kept = []
+    for split in cfg.splits:
+        in_split = [record for record in records if record.split == split]
+        kept.extend(in_split[:per_split])
+    return kept
 
 
 def defect_sampler(dataset: Tiles, frac: float) -> WeightedRandomSampler | None:
@@ -100,7 +106,7 @@ def run_epoch(model, loader, loss_fn, optimizer, device, scaler, desc: str) -> f
     """
     training = optimizer is not None
     model.train(training)
-    total = seen = 0
+    total_loss = tiles_seen = 0
     with torch.set_grad_enabled(training):
         for images, masks in tqdm(
             loader, desc=desc, leave=False, disable=not sys.stderr.isatty()
@@ -120,9 +126,9 @@ def run_epoch(model, loader, loss_fn, optimizer, device, scaler, desc: str) -> f
                 if training:
                     loss.backward()
                     optimizer.step()
-            total += loss.item() * len(images)
-            seen += len(images)
-    return total / max(seen, 1)
+            total_loss += loss.item() * len(images)
+            tiles_seen += len(images)
+    return total_loss / max(tiles_seen, 1)
 
 
 @torch.no_grad()
@@ -248,12 +254,16 @@ def train(cfg: Config) -> dict:
 
     sampler = defect_sampler(sets["train"], cfg.defect_frac)
     train_loader = loader(
-        sets["train"], sampler=sampler, shuffle=sampler is None, drop_last=True
+        sets["train"],
+        sampler=sampler,
+        shuffle=sampler is None,
+        drop_last=len(sets["train"]) >= cfg.batch_size,
     )
     val_loader = loader(sets["val"], shuffle=False)
 
     best_loss, best_epoch = float("inf"), 0
     checkpoint = cfg.run_dir / "best.pt"
+    history = []
     for epoch in range(1, cfg.epochs + 1):
         started = time.time()
         train_loss = run_epoch(
@@ -261,10 +271,20 @@ def train(cfg: Config) -> dict:
         )
         val_loss = run_epoch(model, val_loader, loss_fn, None, device, scaler, "val")
         scheduler.step(val_loss)
+        lr = optimizer.param_groups[0]["lr"]
         print(
             f"[{epoch:3d}/{cfg.epochs}] train {train_loss:.4f}  val {val_loss:.4f}  "
-            f"lr {optimizer.param_groups[0]['lr']:.1e}  {time.time() - started:.0f}s"
+            f"lr {lr:.1e}  {time.time() - started:.0f}s"
         )
+        # Written every epoch
+        history.append({"epoch": epoch, "train": train_loss, "val": val_loss, "lr": lr})
+        (cfg.run_dir / "history.json").write_text(json.dumps(history, indent=2))
+        # A broken loss comes out as "nan", and nan never counts as better than
+        # anything. So without this we would save nothing and keep going for
+        # nothing. Stop here instead and say why.
+        if not math.isfinite(val_loss):
+            print(f"[stop] val loss is {val_loss} -- lower lr, or set amp: false")
+            break
         if val_loss < best_loss:
             best_loss, best_epoch = val_loss, epoch
             torch.save(
@@ -275,6 +295,10 @@ def train(cfg: Config) -> dict:
             print(f"[stop] no improvement since epoch {best_epoch}")
             break
 
+    if not checkpoint.exists():
+        raise RuntimeError(
+            f"no checkpoint written: no finite val loss in {cfg.epochs} epochs"
+        )
     model.load_state_dict(torch.load(checkpoint, map_location=device)["model"])
     metrics = evaluate(
         predict(model, sets["test"], device, cfg.batch_size), cfg.num_classes

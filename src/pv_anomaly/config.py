@@ -54,6 +54,7 @@ class Config:
     weight_decay: float = 1e-4
     num_workers: int = 4
     patience: int = 10
+    resume: bool = False  # pick up from last.pt if the run was interrupted
     defect_frac: float = 0.5  # share of each batch drawn from defect tiles
 
     @classmethod
