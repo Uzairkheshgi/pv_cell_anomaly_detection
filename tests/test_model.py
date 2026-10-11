@@ -4,7 +4,7 @@ import torch
 
 from pv_anomaly.config import Config
 from pv_anomaly.losses import CEDiceLoss, median_frequency_weights
-from pv_anomaly.metrics import evaluate, report, size_recall
+from pv_anomaly.metrics import evaluate, json_safe, report, size_recall
 
 # --- config ---------------------------------------------------------------
 
@@ -154,3 +154,16 @@ def test_score_sampling_matches_the_exact_value():
     sampled = evaluate(iter(images), 2, score_pixels=20_000)
     assert sampled["auprc"] == pytest.approx(exact["auprc"], abs=0.02)
     assert sampled["auroc"] == pytest.approx(exact["auroc"], abs=0.02)
+
+
+def test_json_safe_removes_nan_and_inf():
+    """Python writes nan and inf into JSON; browsers and most readers reject it."""
+    import json
+
+    zeros = np.zeros((16, 16), np.uint8)
+    metrics = evaluate([(zeros, zeros, zeros.astype(np.float32))], 3)
+    assert "NaN" in json.dumps(metrics)  # what we are protecting against
+
+    text = json.dumps(json_safe(metrics))
+    assert "NaN" not in text and "Infinity" not in text
+    assert json.loads(text)["iou"][2] is None

@@ -25,7 +25,7 @@ from pv_anomaly.data import (
     tile_positions,
 )
 from pv_anomaly.losses import CEDiceLoss, median_frequency_weights
-from pv_anomaly.metrics import evaluate, report
+from pv_anomaly.metrics import evaluate, json_safe, report
 
 
 def resolve_device(name: str) -> torch.device:
@@ -262,9 +262,21 @@ def train(cfg: Config) -> dict:
     val_loader = loader(sets["val"], shuffle=False)
 
     best_loss, best_epoch = float("inf"), 0
-    checkpoint = cfg.run_dir / "best.pt"
+    checkpoint, last = cfg.run_dir / "best.pt", cfg.run_dir / "last.pt"
     history = []
-    for epoch in range(1, cfg.epochs + 1):
+    start_epoch = 1
+
+    if cfg.resume and last.exists():
+        state = torch.load(last, map_location=device, weights_only=False)
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(state["optimizer"])
+        best_loss, best_epoch = state["best_loss"], state["best_epoch"]
+        history, start_epoch = state["history"], state["epoch"] + 1
+        print(
+            f"[resume] carrying on from epoch {start_epoch}, best so far {best_loss:.4f}"
+        )
+
+    for epoch in range(start_epoch, cfg.epochs + 1):
         started = time.time()
         train_loss = run_epoch(
             model, train_loader, loss_fn, optimizer, device, scaler, f"epoch {epoch}"
@@ -291,7 +303,20 @@ def train(cfg: Config) -> dict:
                 {"model": model.state_dict(), "epoch": epoch, "config": cfg.as_dict()},
                 checkpoint,
             )
-        elif epoch - best_epoch >= cfg.patience:
+        # best.pt is the model we score; last.pt also carries the optimizer, so
+        # a run killed part way through can pick up where it stopped.
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch,
+                "best_loss": best_loss,
+                "best_epoch": best_epoch,
+                "history": history,
+            },
+            last,
+        )
+        if val_loss >= best_loss and epoch - best_epoch >= cfg.patience:
             print(f"[stop] no improvement since epoch {best_epoch}")
             break
 
@@ -305,7 +330,7 @@ def train(cfg: Config) -> dict:
     )
     names = ["background"] + [f"defect{i}" for i in range(1, cfg.num_classes)]
     print(f"\n=== test (best epoch {best_epoch}) ===\n{report(metrics, names)}")
-    (cfg.run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+    (cfg.run_dir / "metrics.json").write_text(json.dumps(json_safe(metrics), indent=2))
     return metrics
 
 
@@ -316,10 +341,11 @@ def main() -> None:
     parser.add_argument("--fold", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--device")
+    parser.add_argument("--resume", action="store_true", default=None)
     args = parser.parse_args()
 
     cfg = Config.load(args.config)
-    for key in ("fold", "epochs", "device"):
+    for key in ("fold", "epochs", "device", "resume"):
         if getattr(args, key) is not None:
             setattr(cfg, key, getattr(args, key))
     train(cfg)

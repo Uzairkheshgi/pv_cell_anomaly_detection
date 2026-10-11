@@ -6,6 +6,8 @@ so a model that finds nothing still scores 97% and looks fine.
 
 from __future__ import annotations
 
+import math
+
 import cv2
 import numpy as np
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -151,6 +153,7 @@ def report(metrics: dict, class_names: list[str]) -> str:
     Returns:
         A multi-line string.
     """
+
     lines = [f"{'class':<12}{'IoU':>8}{'F1':>8}{'support':>14}"]
     for name, iou, f1, support in zip(
         class_names, metrics["iou"], metrics["f1"], metrics["support"]
@@ -169,3 +172,12 @@ def report(metrics: dict, class_names: list[str]) -> str:
                 f"recall={bucket['recall'] * 100:5.1f}%"
             )
     return "\n".join(lines)
+
+
+def json_safe(obj):
+    """Swap nan and inf for null, which is all plain JSON can hold."""
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [json_safe(v) for v in obj]
+    return None if isinstance(obj, float) and not math.isfinite(obj) else obj
