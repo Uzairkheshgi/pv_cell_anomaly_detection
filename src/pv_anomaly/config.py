@@ -49,7 +49,8 @@ class Config:
     threshold: float = 0.5
 
     # optimisation
-    alpha: float = 0.5  # loss = alpha * weighted CE + (1 - alpha) * Dice
+    alpha: float = 0.5  # loss = alpha * weighted CE + (1 - alpha) * overlap
+    overlap: str = "dice"  # or "lovasz", which optimises IoU directly
     epochs: int = 50
     batch_size: int = 8
     lr: float = 1e-3

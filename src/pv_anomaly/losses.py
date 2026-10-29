@@ -1,13 +1,14 @@
-"""The training loss: weighted cross-entropy plus Dice.
+"""The training loss: weighted cross-entropy plus an overlap term.
 
 Defects are about 1% of pixels, so plain cross-entropy can score 99% by
 answering "background" everywhere. Weighting makes rare pixels count for more,
-and Dice measures overlap while ignoring background entirely.
+and the overlap term judges shapes while ignoring background entirely.
 """
 
 from __future__ import annotations
 
 import numpy as np
+import segmentation_models_pytorch as smp
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -43,14 +44,20 @@ def median_frequency_weights(
 
 
 class CEDiceLoss(nn.Module):
-    """Weighted cross-entropy and Dice, mixed by `alpha`.
+    """Weighted cross-entropy and an overlap loss, mixed by `alpha`.
 
-    Cross-entropy judges each pixel on its own; Dice judges whether the predicted
-    shape overlaps the real one. Using both works better than either alone.
+    Cross-entropy judges each pixel on its own; the overlap term judges whether
+    the predicted shape matches the real one. Using both works better than
+    either alone. The overlap term is Dice, or Lovasz, which goes straight for
+    IoU instead of a stand-in for it.
     """
 
     def __init__(
-        self, num_classes: int, weights: torch.Tensor | None = None, alpha: float = 0.5
+        self,
+        num_classes: int,
+        weights: torch.Tensor | None = None,
+        alpha: float = 0.5,
+        overlap: str = "dice",
     ):
         """Set up the loss.
 
@@ -58,17 +65,23 @@ class CEDiceLoss(nn.Module):
             num_classes: Number of pixel classes.
             weights: Per-class weights for cross-entropy, or None for equal. (calculated by `median_frequency_weights`).
             alpha: Share of cross-entropy. 0.5 means half each.
+            overlap: "dice", or "lovasz" to optimise IoU directly.
 
         Raises:
-            ValueError: If `alpha` is outside 0 to 1, or `weights` is the wrong
-                length.
+            ValueError: If `alpha` is outside 0 to 1, `weights` is the wrong
+                length, or `overlap` is not a known name.
         """
         super().__init__()
         if not 0.0 <= alpha <= 1.0:
             raise ValueError("alpha must be in [0, 1]")
         if weights is not None and weights.numel() != num_classes:
             raise ValueError("weights length must equal num_classes")
+        if overlap not in ("dice", "lovasz"):
+            raise ValueError(f"unknown overlap {overlap!r}; expected dice or lovasz")
         self.num_classes, self.alpha = num_classes, alpha
+        self.lovasz = (
+            smp.losses.LovaszLoss(mode="multiclass") if overlap == "lovasz" else None
+        )
         self.register_buffer("weights", None if weights is None else weights.float())
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -81,16 +94,21 @@ class CEDiceLoss(nn.Module):
         Returns:
             A single loss value.
         """
-        probs = logits.softmax(1)
-        onehot = F.one_hot(target, self.num_classes).permute(0, 3, 1, 2).float()
-        dims = (0, 2, 3)
-        dice = (2 * (probs * onehot).sum(dims) + 1e-6) / (
-            probs.sum(dims) + onehot.sum(dims) + 1e-6
-        )
+        if self.lovasz is not None:
+            overlap = self.lovasz(logits, target)
+        else:
+            probs = logits.softmax(1)
+            onehot = F.one_hot(target, self.num_classes).permute(0, 3, 1, 2).float()
+            dims = (0, 2, 3)
+            dice = (2 * (probs * onehot).sum(dims) + 1e-6) / (
+                probs.sum(dims) + onehot.sum(dims) + 1e-6
+            )
 
-        # Classes absent from the batch would otherwise score a free 1.0 and
-        # quietly weaken the signal on rare-defect batches.
-        present = onehot.sum(dims)[1:] > 0
-        dice_loss = 1 - dice[1:][present].mean() if present.any() else logits.sum() * 0
+            # Classes absent from the batch would otherwise score a free 1.0 and
+            # quietly weaken the signal on rare-defect batches.
+            present = onehot.sum(dims)[1:] > 0
+            overlap = (
+                1 - dice[1:][present].mean() if present.any() else logits.sum() * 0
+            )
         ce = F.cross_entropy(logits, target, weight=self.weights)
-        return self.alpha * ce + (1 - self.alpha) * dice_loss
+        return self.alpha * ce + (1 - self.alpha) * overlap
