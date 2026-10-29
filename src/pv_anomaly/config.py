@@ -45,6 +45,8 @@ class Config:
     arch: str = "unet"
     encoder: str = "resnet34"
     encoder_weights: str | None = "imagenet"
+    # Defect cut-off for 2-class runs, picked on val. 0.5 is the same as argmax.
+    threshold: float = 0.5
 
     # optimisation
     alpha: float = 0.5  # loss = alpha * weighted CE + (1 - alpha) * Dice

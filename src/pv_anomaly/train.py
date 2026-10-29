@@ -174,7 +174,14 @@ def predict(model, dataset: Tiles, device, batch_size: int):
             .softmax(0)
             .numpy()
         )
-        yield target, probs.argmax(0).astype(np.uint8), 1 - probs[0]
+        score = 1 - probs[0]
+        # Two classes get a tunable cut-off; more than two fall back to argmax.
+        pred = (
+            (score >= cfg.threshold)
+            if cfg.num_classes == 2
+            else probs.argmax(0)
+        ).astype(np.uint8)
+        yield target, pred, score
 
 
 def train(cfg: Config) -> dict:
