@@ -120,9 +120,10 @@ def evaluate(
     y_true, y_score = [], []
 
     for target, pred, score in stream:
-        cm += np.bincount(target.ravel() * n + pred.ravel(), minlength=n * n).reshape(
-            n, n
-        )
+        # Masks are uint8, so widen before multiplying: target * n would wrap
+        # past 255 for class 9 and up when n is 29.
+        index = target.ravel().astype(np.int64) * n + pred.ravel()
+        cm += np.bincount(index, minlength=n * n).reshape(n, n)
         _add_regions(target, pred, hits, totals, defects)
         if score_pixels:
             flat = target.size
