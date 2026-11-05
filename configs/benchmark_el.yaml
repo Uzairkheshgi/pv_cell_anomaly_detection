@@ -1,0 +1,21 @@
+name: benchmark_el
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 cell features plus 16 defects. The masks already hold a class
+# index per pixel, so nothing is thresholded.
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+# The dataset ships its own val images, so val_frac is unused here.
+split_mode: predefined
+tile: 512
+stride: 256
+
+epochs: 120
+batch_size: 8
+encoder: resnet34

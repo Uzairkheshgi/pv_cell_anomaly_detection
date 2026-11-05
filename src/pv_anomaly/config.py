@@ -26,6 +26,9 @@ class Config:
     mask_threshold: int = 127
     mask_cache: int = 1024  # masks held in RAM, ~1 MB each; bounds growth
     num_classes: int = 2
+    # Which class indices are defects, for the defect-tile sampler and the
+    # size-recall report. Empty means everything above background counts.
+    defect_classes: tuple[int, ...] = ()
     max_images: int | None = None  # debug aid; None uses all
 
     # Tile at native resolution instead of resizing: PVEL-S microcracks are a
@@ -80,6 +83,7 @@ class Config:
         cfg = cls(**raw)
         cfg.root, cfg.out_dir = Path(cfg.root), Path(cfg.out_dir)
         cfg.splits = tuple(cfg.splits)
+        cfg.defect_classes = tuple(cfg.defect_classes)
         return cfg
 
     def as_dict(self) -> dict:

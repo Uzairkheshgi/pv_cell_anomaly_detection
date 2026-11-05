@@ -174,7 +174,13 @@ def predict(model, dataset: Tiles, device, batch_size: int):
             .softmax(0)
             .numpy()
         )
-        score = 1 - probs[0]
+        # The defect score is the chance of any defect class, which for two
+        # classes is simply "not background".
+        score = (
+            probs[list(cfg.defect_classes)].sum(0)
+            if cfg.defect_classes
+            else 1 - probs[0]
+        )
         # Two classes get a tunable cut-off; more than two fall back to argmax.
         pred = (
             (score >= cfg.threshold)
@@ -333,9 +339,11 @@ def train(cfg: Config) -> dict:
         )
     model.load_state_dict(torch.load(checkpoint, map_location=device)["model"])
     metrics = evaluate(
-        predict(model, sets["test"], device, cfg.batch_size), cfg.num_classes
+        predict(model, sets["test"], device, cfg.batch_size),
+        cfg.num_classes,
+        defects=cfg.defect_classes,
     )
-    names = ["background"] + [f"defect{i}" for i in range(1, cfg.num_classes)]
+    names = ["background"] + [f"class{i}" for i in range(1, cfg.num_classes)]
     print(f"\n=== test (best epoch {best_epoch}) ===\n{report(metrics, names)}")
     (cfg.run_dir / "metrics.json").write_text(json.dumps(json_safe(metrics), indent=2))
     return metrics

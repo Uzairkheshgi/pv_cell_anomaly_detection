@@ -77,6 +77,20 @@ def index_dataset(
     return records
 
 
+def defect_pixels(mask: np.ndarray, defect_classes: tuple[int, ...] = ()) -> np.ndarray:
+    """Mark which pixels hold a defect.
+
+    Args:
+        mask: Class index per pixel.
+        defect_classes: Which indices count as defects. Empty means every class
+            above background does, which is what a two-class run wants.
+
+    Returns:
+        A True/False array the same shape as `mask`.
+    """
+    return np.isin(mask, defect_classes) if defect_classes else mask > 0
+
+
 def tile_positions(
     height: int, width: int, tile: int, stride: int
 ) -> list[tuple[int, int]]:
@@ -186,10 +200,17 @@ def make_split(records, mode, n_folds, fold, val_frac, seed):
     if mode == "predefined":
         train_val = sorted({r.image_id for r in records if r.split == "train"})
         test = sorted({r.image_id for r in records if r.split == "test"})
+        shipped_val = sorted({r.image_id for r in records if r.split == "val"})
         if not train_val or not test:
             raise ValueError(
                 "predefined split needs records from both train/ and test/"
             )
+        # Some datasets ship their own val images. Keep those rather than
+        # cutting a fresh val group out of train.
+        if shipped_val:
+            others = set(train_val) | set(test)
+            assert not set(shipped_val) & others, "split leak"
+            return train_val, shipped_val, test
     elif mode == "cv":
         if not 0 <= fold < n_folds:
             raise ValueError(f"fold must be in [0, {n_folds})")
@@ -274,22 +295,24 @@ class Tiles(Dataset):
         for i, record in enumerate(records):
             mask = self.mask(record)
             for y, x in tile_positions(*mask.shape[:2], cfg.tile, cfg.stride):
-                if crop(mask, y, x, cfg.tile).any():
+                tile = crop(mask, y, x, cfg.tile)
+                if defect_pixels(tile, cfg.defect_classes).any():
                     self.defect.append(len(self.tiles))
                 self.tiles.append((i, y, x))
 
     def mask(self, record: Record) -> np.ndarray:
-        """Get one image's mask, as 0 for background and 1 for defect.
+        """Get one image's mask as a class index per pixel.
 
-        The files hold 0 and 255 (or 0 and 1), so this builds the 0/1 version
-        rather than handing back what is on disk. Read once, then kept in
-        memory; the oldest is dropped once `cfg.mask_cache` are held.
+        With two classes the files hold 0 and 255 (or 0 and 1), so this builds
+        the 0/1 version rather than handing back what is on disk. With more,
+        the file is already indexed and is used as it is. Read once, then kept
+        in memory; the oldest is dropped once `cfg.mask_cache` are held.
 
         Args:
             record: The pair whose mask to get.
 
         Returns:
-            A uint8 array of 0s and 1s.
+            A uint8 array: 0s and 1s for two classes, class indices otherwise.
 
         Raises:
             FileNotFoundError: If the mask file cannot be read.
@@ -298,13 +321,20 @@ class Tiles(Dataset):
             raw = cv2.imread(str(record.mask), cv2.IMREAD_GRAYSCALE)
             if raw is None:
                 raise FileNotFoundError(record.mask)
-            # Mask files come in two styles: 0 and 1, or 0 and 255. The 0/255
-            # ones are JPEGs with grey smudge round every edge that we must
-            # ignore, but that same cut-off would wipe a 0/1 file clean.
-            threshold = 0 if raw.max() <= 1 else self.cfg.mask_threshold
+            if self.cfg.num_classes > 2:
+                # More than two classes means the file already holds a class
+                # index per pixel, so there is nothing to work out.
+                mask = raw
+            else:
+                # Mask files come in two styles: 0 and 1, or 0 and 255. The
+                # 0/255 ones are JPEGs with grey smudge round every edge that
+                # we must ignore, but that same cut-off would wipe a 0/1 file
+                # clean.
+                threshold = 0 if raw.max() <= 1 else self.cfg.mask_threshold
+                mask = (raw > threshold).astype(np.uint8)
             if len(self._masks) >= self.cfg.mask_cache:
                 del self._masks[next(iter(self._masks))]
-            self._masks[record.image_id] = (raw > threshold).astype(np.uint8)
+            self._masks[record.image_id] = mask
         return self._masks[record.image_id]
 
     def image(self, record: Record) -> np.ndarray:

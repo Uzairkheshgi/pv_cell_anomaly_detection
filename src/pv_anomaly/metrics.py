@@ -12,13 +12,15 @@ import cv2
 import numpy as np
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from pv_anomaly.data import defect_pixels
+
 SIZE_BINS = (100, 600, 2_000, 10_000)
 
 
 SIZE_EDGES = np.array([0, *SIZE_BINS, np.inf])
 
 
-def _add_regions(target, pred, hits, totals) -> None:
+def _add_regions(target, pred, hits, totals, defects=()) -> None:
     """Add one image's defect regions to the running size tally.
 
     Args:
@@ -26,16 +28,20 @@ def _add_regions(target, pred, hits, totals) -> None:
         pred: Predicted mask.
         hits: Per-bucket count of regions found. Updated in place.
         totals: Per-bucket count of regions present. Updated in place.
+        defects: Class indices that count as defects. Empty means every class
+            above background. Without this, a run with cell features as their
+            own classes would count busbars and ribbons as defects.
     """
+    found = defect_pixels(pred, defects)
     n_labels, labels = cv2.connectedComponents(
-        (target > 0).astype(np.uint8), connectivity=8
+        defect_pixels(target, defects).astype(np.uint8), connectivity=8
     )
     for label in range(1, n_labels):
         region = labels == label
         bucket = int(np.searchsorted(SIZE_EDGES, region.sum(), "right") - 1)
         totals[bucket] += 1
         # Counted as detected only if covered, not merely touched.
-        hits[bucket] += (pred[region] > 0).mean() >= 0.5
+        hits[bucket] += found[region].mean() >= 0.5
 
 
 def _buckets(hits, totals) -> list[dict]:
@@ -51,7 +57,7 @@ def _buckets(hits, totals) -> list[dict]:
     ]
 
 
-def size_recall(targets, preds) -> list[dict]:
+def size_recall(targets, preds, defects=()) -> list[dict]:
     """Measure what share of defects was found, grouped by defect size.
 
     This is the diagnostic that says whether the tile size is earning its keep.
@@ -60,6 +66,8 @@ def size_recall(targets, preds) -> list[dict]:
     Args:
         targets: True masks, one per image.
         preds: Predicted masks, one per image.
+        defects: Class indices that count as defects. Empty means every class
+            above background.
 
     Returns:
         One entry per size bucket, with its pixel range, how many defects fell in
@@ -70,12 +78,16 @@ def size_recall(targets, preds) -> list[dict]:
         np.zeros(len(SIZE_EDGES) - 1, int),
     )
     for target, pred in zip(targets, preds):
-        _add_regions(target, pred, hits, totals)
+        _add_regions(target, pred, hits, totals, defects)
     return _buckets(hits, totals)
 
 
 def evaluate(
-    stream, num_classes: int, score_pixels: int = 20_000, seed: int = 0
+    stream,
+    num_classes: int,
+    score_pixels: int = 20_000,
+    seed: int = 0,
+    defects=(),
 ) -> dict:
     """Score predictions, reading one image at a time.
 
@@ -90,6 +102,8 @@ def evaluate(
             uniform, so the defect rate is preserved and the estimate matches
             scoring every pixel to several decimal places.
         seed: Random seed for that sampling.
+        defects: Class indices that count as defects, for the size breakdown
+            and the two curve scores. Empty means every class above background.
 
     Returns:
         A dict of per-class IoU and F1, their averages, AUPRC, AUROC, and the
@@ -109,11 +123,11 @@ def evaluate(
         cm += np.bincount(target.ravel() * n + pred.ravel(), minlength=n * n).reshape(
             n, n
         )
-        _add_regions(target, pred, hits, totals)
+        _add_regions(target, pred, hits, totals, defects)
         if score_pixels:
             flat = target.size
             idx = rng.integers(0, flat, min(score_pixels, flat))
-            y_true.append((target.ravel() > 0)[idx])
+            y_true.append(defect_pixels(target, defects).ravel()[idx])
             y_score.append(score.ravel()[idx])
 
     tp = np.diag(cm).astype(float)
