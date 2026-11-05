@@ -236,8 +236,15 @@ def train(cfg: Config) -> dict:
 
     # Weights come from the training fold only; using the whole dataset would
     # leak test-set class statistics into the objective.
-    weights = median_frequency_weights(sets["train"].class_pixels())
-    print(f"[data] class weights {[round(w, 2) for w in weights.tolist()]}")
+    weights = (
+        median_frequency_weights(sets["train"].class_pixels())
+        if cfg.class_weights
+        else None
+    )
+    if weights is None:
+        print("[data] class weights off")
+    else:
+        print(f"[data] class weights {[round(w, 2) for w in weights.tolist()]}")
 
     model = smp.create_model(
         cfg.arch,

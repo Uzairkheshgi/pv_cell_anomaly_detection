@@ -137,12 +137,22 @@ def evaluate(
         iou = np.where(tp + fp + fn > 0, tp / (tp + fp + fn), np.nan)
         f1 = np.where(2 * tp + fp + fn > 0, 2 * tp / (2 * tp + fp + fn), np.nan)
 
+    # Average only over classes the split can actually score. A class absent
+    # from the split scores 0 when the model predicts it anywhere and nan when
+    # it does not, so a plain nanmean mixes real zeros with unscoreable ones.
+    support = cm.sum(1)
+    scored = support > 0
+    picked = [i for i in (defects or range(1, n)) if scored[i]]
+
     out = {
         "iou": iou.tolist(),
         "f1": f1.tolist(),
-        "support": cm.sum(1).tolist(),
-        "mean_iou": float(np.nanmean(iou)),
-        "macro_f1": float(np.nanmean(f1)),
+        "support": support.tolist(),
+        "classes_scored": int(scored.sum()),
+        "mean_iou": float(np.nanmean(iou[scored])),
+        "macro_f1": float(np.nanmean(f1[scored])),
+        "defect_mean_iou": float(np.nanmean(iou[picked])) if picked else None,
+        "defect_classes_scored": len(picked),
         "auprc": None,
         "auroc": None,
         "size_recall": _buckets(hits, totals),
@@ -174,8 +184,18 @@ def report(metrics: dict, class_names: list[str]) -> str:
         class_names, metrics["iou"], metrics["f1"], metrics["support"]
     ):
         lines.append(f"{name:<12}{iou * 100:>8.2f}{f1 * 100:>8.2f}{support:>14,}")
-    lines.append(f"{'mean IoU':<12}{metrics['mean_iou'] * 100:>8.2f}")
+    scored = metrics["classes_scored"]
+    lines.append(
+        f"{'mean IoU':<12}{metrics['mean_iou'] * 100:>8.2f}"
+        f"{'':>8}{f'over {scored} scored':>14}"
+    )
     lines.append(f"{'macro F1':<12}{metrics['macro_f1'] * 100:>8.2f}")
+    if metrics["defect_mean_iou"] is not None:
+        picked = metrics["defect_classes_scored"]
+        lines.append(
+            f"{'defect IoU':<12}{metrics['defect_mean_iou'] * 100:>8.2f}"
+            f"{'':>8}{f'over {picked} scored':>14}"
+        )
     for key in ("auprc", "auroc"):
         if metrics[key] is not None:
             lines.append(f"{'pixel ' + key.upper():<12}{metrics[key] * 100:>8.2f}")

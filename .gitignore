@@ -17,3 +17,4 @@ runs/
 *.zip
 kaggle/
 predictions/
+EXPERIMENTS*

@@ -53,6 +53,10 @@ class Config:
 
     # optimisation
     alpha: float = 0.5  # loss = alpha * weighted CE + (1 - alpha) * Dice
+    # Median-frequency weights put background ~400x below the median class,
+    # which on a 29-class run leaves no reason to get background right. False
+    # weights every class equally.
+    class_weights: bool = True
     epochs: int = 50
     batch_size: int = 8
     lr: float = 1e-3
