@@ -1,0 +1,30 @@
+name: benchmark_el_stride256
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 cell features plus 16 defects. The masks already hold a class
+# index per pixel, so nothing is thresholded.
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+# The dataset ships its own val images, so val_frac is unused here.
+split_mode: predefined
+# Ablation: run 2's tile size with no overlap, so 4 tiles an image and ~276
+# steps an epoch instead of 622. Against run 2 this separates "smaller tiles
+# help" from "more gradient steps help", which epochs-fixed tiling confounds.
+tile: 256
+stride: 256
+
+epochs: 120
+batch_size: 8
+encoder: resnet34
+# Background is 65% of pixels but median-frequency weighting hands it 0.0026,
+# and the first run scored only 68.8% IoU on it.
+class_weights: false
+# 70 val images make the loss noisy; patience 10 dropped the lr three times
+# while val loss was still falling.
+patience: 20

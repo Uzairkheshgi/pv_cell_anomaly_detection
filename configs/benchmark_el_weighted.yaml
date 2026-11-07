@@ -1,0 +1,32 @@
+name: benchmark_el_weighted
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 cell features plus 16 defects. The masks already hold a class
+# index per pixel, so nothing is thresholded.
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+# The dataset ships its own val images, so val_frac is unused here.
+split_mode: predefined
+# Images are exactly 512x512, so tile 512 gives one tile each: 69 steps an
+# epoch, and the first run ran out of learning rate long before it converged.
+# 256/128 gives 9 tiles an image, ~620 steps, and doubles as augmentation.
+tile: 256
+stride: 128
+
+epochs: 120
+batch_size: 8
+encoder: resnet34
+# Ablation for §10.5: identical to configs/benchmark_el.yaml except the class
+# weighting is back on, to separate its effect from the smaller tiles. Run 2
+# changed tile, class_weights and patience together, so the +24.8 background
+# IoU cannot yet be attributed.
+class_weights: true
+# 70 val images make the loss noisy; patience 10 dropped the lr three times
+# while val loss was still falling.
+patience: 20
