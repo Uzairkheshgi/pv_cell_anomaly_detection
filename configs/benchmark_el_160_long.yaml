@@ -1,0 +1,43 @@
+# 160x160 parity, take 2 -- with a STEP-MATCHED schedule.
+#
+# Take 1 (benchmark_el_160, 48.29 mIoU) is confounded and must not be quoted.
+# Resizing to 160 leaves one tile an image instead of nine, so an epoch is 70
+# gradient steps instead of 623 -- 8.9x less work. `epochs: 1000` gave the cap
+# enough headroom, but `patience` is ALSO counted in epochs, so early stopping
+# and ReduceLROnPlateau both fired ~8.9x early in step terms. The run stopped at
+# 131 epochs / 9,170 steps against native's 120 / 74,760, with the learning rate
+# already down to 1e-5 while training loss was still falling.
+#
+# The tell was in the per-class table: classes over 200k test px lost 12.24 IoU
+# while classes under 20k lost 7.99. Downsampling hurts thin and small things
+# most; the inverted pattern is the signature of an undertrained model.
+#
+# Everything below is scaled so the SCHEDULE sees the same number of gradient
+# steps as the native reference:
+#   patience 178  = 12,460 steps, matching native's 20 epochs x 623
+#   lr patience 89 (patience//2) = 6,230 steps, matching native's 10 x 623
+#   epochs 1068   = 74,760 steps, matching native's 120 x 623
+#
+# Pair this with configs/benchmark_el_short.yaml, which attacks the same
+# question from the other side.
+name: benchmark_el_160_long
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+split_mode: predefined
+resize: 160
+tile: 160
+stride: 160
+
+epochs: 1068
+batch_size: 8
+encoder: resnet34
+class_weights: false
+patience: 178

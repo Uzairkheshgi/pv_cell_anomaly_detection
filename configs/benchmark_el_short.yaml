@@ -1,0 +1,39 @@
+# Step-count CONTROL for the 160x160 parity question. Native resolution,
+# truncated to the gradient-step budget the first 160 run actually received.
+#
+# The question take 1 could not answer: did 160x160 input cost 9.3 mIoU, or did
+# training for 8.9x fewer gradient steps cost it? This config holds resolution
+# at native and starves the budget instead.
+#
+# 15 epochs x 623 steps = 9,345 steps, against the 9,170 that
+# benchmark_el_160_r1 got. Same tiling, same loss, same everything else as
+# configs/benchmark_el.yaml, which is the 57.61 +/- 0.47 reference.
+#
+# How to read the result:
+#   lands near 48  -> the budget explains it; resolution is exonerated and the
+#                     160 parity question is still open, pending the long run.
+#   stays near 57  -> the budget does NOT explain it; the drop is real and
+#                     attributable to the 160x160 input regime.
+#
+# patience stays at 20 so the stopping rule is identical to the reference; it
+# cannot fire inside 15 epochs anyway.
+name: benchmark_el_short
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+split_mode: predefined
+tile: 256
+stride: 128
+
+epochs: 15
+batch_size: 8
+encoder: resnet34
+class_weights: false
+patience: 20
