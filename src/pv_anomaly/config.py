@@ -35,6 +35,11 @@ class Config:
     # few pixels wide and do not survive a resize to 224.
     tile: int = 512
     stride: int = 256
+    # Resize whole images to this square size before tiling, for reproducing a
+    # paper that trains at a fixed small input: Ramadan et al. use 160x160.
+    # None keeps native resolution, which every result so far uses. Set tile
+    # and stride to the same value so each image becomes one exact tile.
+    resize: int | None = None
 
     # split: "predefined" honours the shipped train/test dirs (comparable with
     # published numbers); "cv" pools everything into k folds (error bars).

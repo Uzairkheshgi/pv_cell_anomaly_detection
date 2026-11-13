@@ -332,6 +332,15 @@ class Tiles(Dataset):
                 # clean.
                 threshold = 0 if raw.max() <= 1 else self.cfg.mask_threshold
                 mask = (raw > threshold).astype(np.uint8)
+            if self.cfg.resize:
+                # Nearest, because a class index cannot be interpolated. A
+                # defect thinner than one output pixel is lost, which is what
+                # training at this resolution actually costs.
+                mask = cv2.resize(
+                    mask,
+                    (self.cfg.resize, self.cfg.resize),
+                    interpolation=cv2.INTER_NEAREST,
+                )
             if len(self._masks) >= self.cfg.mask_cache:
                 del self._masks[next(iter(self._masks))]
             self._masks[record.image_id] = mask
@@ -344,7 +353,8 @@ class Tiles(Dataset):
             record: The pair whose photo to load.
 
         Returns:
-            A uint8 array shaped (height, width, 3).
+            A uint8 array shaped (height, width, 3), or
+            (cfg.resize, cfg.resize, 3) when `cfg.resize` is set.
 
         Raises:
             FileNotFoundError: If the image file cannot be read.
@@ -354,7 +364,17 @@ class Tiles(Dataset):
             raise FileNotFoundError(record.image)
         # EL is single-channel; cv2 replicated it, and keeping 3 channels keeps
         # the ImageNet encoder weights meaningful.
-        return cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+        image = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+        if self.cfg.resize:
+            # Area is the right decimation filter: it averages rather than
+            # point-samples, so a one-pixel bright crack survives as a dim
+            # smear instead of disappearing between sample points.
+            image = cv2.resize(
+                image,
+                (self.cfg.resize, self.cfg.resize),
+                interpolation=cv2.INTER_AREA,
+            )
+        return image
 
     def __len__(self) -> int:
         """Return the number of tiles."""

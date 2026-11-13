@@ -1,0 +1,44 @@
+# Parity run: reproduce Ramadan et al.'s 160x160 input regime on Benchmark EL.
+#
+# This is the cleaner of the two parity runs. S10.3 established that their
+# evaluation split here is identical to ours (70 val / 72 test) and that their
+# Table 10 pixel counts sum to 1,843,200 = 72 x 160^2. Resizing our test split
+# to 160 reproduces that total exactly, so the only remaining difference
+# between the two evaluations is the model. On PVEL-S the comparison stays
+# confounded at any resolution, because they have no held-out test set (S8.3).
+#
+# What the resize costs: nothing measurable. All 23 scoreable classes survive
+# 512 -> 160 nearest, and the class proportions shift by hundredths of a
+# percent (background 67.67 -> 67.85). This is a 3.2x linear reduction, far
+# gentler than PVEL-S's 6.4x.
+#
+# epochs is high on purpose: one tile an image instead of nine drops an epoch
+# from ~620 steps to ~70, so a fixed 120 would train ~9x fewer gradient steps
+# and confound resolution with training budget -- the thing the stride256
+# control in S10.6 exists to separate. Patience 20 ends it instead.
+name: benchmark_el_160
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 cell features plus 16 defects. The masks already hold a class
+# index per pixel, so nothing is thresholded. Nearest resize keeps them indices.
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+# The dataset ships its own val images, so val_frac is unused here.
+split_mode: predefined
+resize: 160
+tile: 160
+stride: 160
+
+epochs: 1000
+batch_size: 8
+encoder: resnet34
+# Median-frequency weighting costs ~20 mIoU here (S10.6); off, as in the four
+# runs that produced the 57.61 +/- 0.47 baseline this run is compared against.
+class_weights: false
+patience: 20

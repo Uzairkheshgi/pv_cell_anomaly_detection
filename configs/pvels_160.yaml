@@ -1,0 +1,43 @@
+# Parity run: reproduce Ramadan et al.'s 160x160 input regime.
+#
+# S8.4 already showed that *rescoring* our native-resolution predictions at
+# 160x160 changes nothing (+0.14 micro IoU across a 41x pixel reduction), so
+# the grid itself does not flatter their number. What that cannot answer is
+# whether a model trained at 160x160 is better or worse than one trained at
+# 1024x1024 -- different receptive field relative to the cell, different
+# feature scale. This run answers it. S8.5 item 3.
+#
+# resize 160 with tile = stride = 160 makes each image exactly one tile, so
+# there is no padding and no overlap to stitch. 160 is divisible by 32, which
+# the resnet34 encoder's five downsamples require.
+#
+# Images are area-resized, masks nearest-resized. Masks have no choice --
+# class indices cannot be interpolated -- and that loss of sub-pixel defects
+# is a real part of what their protocol costs, not an artefact to engineer
+# around.
+#
+# epochs is high on purpose: one tile an image instead of nine makes an epoch
+# ~9x shorter, so a fixed 120 would train for ~9x fewer gradient steps and
+# confound resolution with training budget (the thing S10.6's stride256
+# control was built to separate). Early stopping at patience 10 ends it
+# instead, exactly as it ended the reference run at epoch 71 of 120.
+#
+# class_weights off to match pvels_nowt. If the weighted config wins there,
+# flip this one too before reading anything into the comparison.
+name: pvels_160
+root: data/pv_kaggle/PVEL_S
+image_dir: defect
+mask_dir: label
+image_glob: "*.jpg"
+mask_suffix: _mask
+
+split_mode: predefined
+resize: 160
+tile: 160
+stride: 160
+
+class_weights: false
+
+epochs: 600
+batch_size: 8
+encoder: resnet34
