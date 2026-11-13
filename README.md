@@ -3,6 +3,64 @@
 Finds defects in electroluminescence (EL) photos of solar cells, marking which
 pixels are faulty. See [APPROACH.md](APPROACH.md) for why it is built this way.
 
+## Results
+
+Two datasets, two tasks. Method, ablations, error bars and negative results are
+in **[EXPERIMENTS.md](EXPERIMENTS.md)**.
+
+### Benchmark EL — 29-class segmentation
+
+Held-out test split, mean ± sd over **four repeated runs**, scored on the 23
+classes actually present in the test set:
+
+| | this work | Ramadan et al. (2026) |
+|---|---|---|
+| mean IoU (23 classes) | **57.61 ± 0.47** | 53.55 |
+| defect classes (12) | 38.32 ± 1.18 | 37.98 |
+| background | 93.58 ± 0.15 | 93.70 |
+| support-weighted IoU | 91.26 ± 0.17 | 91.20 |
+
+Ahead on the aggregate, level on defects and background. Class identities are
+pinned to the dataset's own `ListOfClassesAndColorCodes_20221008.csv` rather
+than guessed from class names.
+
+### PVEL-S — binary defect segmentation
+
+Held-out 360-image test split, U-Net + ResNet-34, native-resolution tiling:
+**92.0% defect IoU** at a threshold chosen on validation (vs 90.4% at the
+default 0.5 — +2.75 precision for −1.23 recall).
+
+### Three findings worth the reading
+
+**1. Median-frequency class weighting is actively harmful here — it costs
+17.7 to 20.6 mIoU.** A full 2×2 factorial over {tile size} × {class weighting}
+shows the weighting accounts for essentially the entire difference between a
+failed run and a working one, while tile size, stride and gradient-step count
+all fall inside run-to-run noise. The cause is the *floor*, not the cap:
+median-frequency weights hand background 0.0026 against a clipped maximum of
+20.0, a 7,735:1 ratio, leaving no reason to get 65% of the pixels right.
+[§10.6]
+
+**2. Per-class results in this literature do not replicate at the precision
+they are quoted to.** Four runs of an identical config — nothing in the
+training loop is seeded — give an aggregate sd of 0.47 mIoU but a *mean
+per-class* sd of 1.81, worst case 5.42 (`busbars` swings 13.2 points). Any
+per-class claim from a single run, ours or anyone's, is unsafe. [§10.7]
+
+**3. Evaluation resolution does not do what it is assumed to do.** Rescoring
+one model's predictions across twelve grids from 1024² down to 64²: pooled-pixel
+IoU is **flat** (91.48 → 91.62 across a 41× pixel reduction), so coarse-grid
+evaluation does *not* inflate the headline metric. What it does destroy is
+per-image performance — macro IoU falls 62.45 → 59.46 at 160² and collapses to
+49.00 at 64² — because downsampling deletes small defects outright. This result
+contradicted our own prior hypothesis and is reported as such. [§8.4]
+
+A fourth, which drives all of the above: **the headline metric describes the
+easy third of the dataset.** Micro IoU 92.0 against macro IoU 62.5 — a
+29.6-point gap. Images with <1% defect area carry 1.4% of defect pixels and
+score 43.4 macro; images over 10% carry 97.1% of the pixels and score 91.2.
+[§5.5]
+
 ## Setup
 
 ```bash
@@ -185,7 +243,12 @@ below it and check the data pipeline before changing the model.
 The size breakdown is the most useful number: big defects are easy, and the
 ones under about 600 pixels are the hard part.
 
-### Results so far (PVEL-S, shipped split, U-Net + ResNet-34)
+### PVEL-S runs in detail (shipped split, U-Net + ResNet-34)
+
+Headline numbers and the multi-class results are in [Results](#results) above;
+this section is the per-run detail. All figures here are at the default
+threshold 0.5 — see §5.3 of [EXPERIMENTS.md](EXPERIMENTS.md) for the tuned
+operating point.
 
 All three were trained on Kaggle GPUs; their folders are under `kaggle/`.
 
@@ -210,8 +273,10 @@ What this says:
 - Big defects are solved. Small ones are not: fewer than half of those under
   600 pixels are found.
 - The size numbers swing by several points between runs that differ only in
-  epoch cap, so a gain of that size from a single run is not yet evidence. Run
-  the five folds before trusting one.
+  epoch cap, so a gain of that size from a single run is not evidence. Error
+  bars now exist for the multi-class task (four repeats, §10.7 of
+  [EXPERIMENTS.md](EXPERIMENTS.md)) but **not yet for these binary runs** —
+  treat differences under ~0.1 IoU here as noise until they do.
 
 The Lovász run used an `overlap: lovasz` setting that is not in this
 repository's code yet, so `configs/` cannot reproduce it.
