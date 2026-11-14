@@ -1,0 +1,39 @@
+name: benchmark_el_cldice
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 cell features plus 16 defects. The masks already hold a class
+# index per pixel, so nothing is thresholded.
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+# The dataset ships its own val images, so val_frac is unused here.
+split_mode: predefined
+# Images are exactly 512x512, so tile 512 gives one tile each: 69 steps an
+# epoch, and the first run ran out of learning rate long before it converged.
+# 256/128 gives 9 tiles an image, ~620 steps, and doubles as augmentation.
+tile: 256
+stride: 128
+
+epochs: 120
+batch_size: 8
+encoder: resnet34
+# Background is 65% of pixels but median-frequency weighting hands it 0.0026,
+# and the first run scored only 68.8% IoU on it.
+class_weights: false
+# 70 val images make the loss noisy; patience 10 dropped the lr three times
+# while val loss was still falling.
+patience: 20
+
+# clDice (Shit et al., CVPR 2021) on the two thin defect classes. The overlap
+# term becomes 0.5 * Dice + 0.5 * clDice, so the loss also punishes cracks and
+# gridlines predicted as broken pieces. 14 = crack, 15 = gridline. Their
+# half-width is under 4 px for 99% of training regions, so 5 skeleton steps
+# reach the centre line.
+cldice_classes: [14, 15]
+cldice_weight: 0.5
+cldice_iters: 5

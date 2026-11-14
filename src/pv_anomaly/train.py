@@ -294,7 +294,19 @@ def train(cfg: Config) -> dict:
         in_channels=3,
         classes=cfg.num_classes,
     ).to(device)
-    loss_fn = CEDiceLoss(cfg.num_classes, weights, cfg.alpha).to(device)
+    loss_fn = CEDiceLoss(
+        cfg.num_classes,
+        weights,
+        cfg.alpha,
+        cfg.cldice_classes,
+        cfg.cldice_weight,
+        cfg.cldice_iters,
+    ).to(device)
+    if cfg.cldice_weight > 0 and cfg.cldice_classes:
+        print(
+            f"[loss] clDice on classes {list(cfg.cldice_classes)}, "
+            f"weight {cfg.cldice_weight}, {cfg.cldice_iters} skeleton steps"
+        )
     optimizer = torch.optim.Adam(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
