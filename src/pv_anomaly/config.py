@@ -62,6 +62,26 @@ class Config:
     # which on a 29-class run leaves no reason to get background right. False
     # weights every class equally.
     class_weights: bool = True
+    # Which scheme to use when class_weights is on. "median" reproduces every
+    # run before 2026-11-13. "balanced" is Cui et al.'s class-balanced loss
+    # (CVPR 2019), whose beta bounds the weight ratio at ~1/(1-beta) -- the
+    # published answer to median frequency's unbounded floor. "inverse" is
+    # plain inverse frequency. "recall" is Tian et al.'s recall loss, which is
+    # dynamic and recomputed per batch inside CEDiceLoss.
+    weighting: str = "median"
+    # Beta for weighting="balanced". It sets the weight spread at ~1/(1-beta),
+    # measured on benchmark_el's train split: 0.99 -> 1.8:1, 0.999 -> 13.3:1,
+    # 0.9999 -> 129:1, 0.99999 -> 1283:1, 0.9999999 -> 128,195:1. Median
+    # frequency sits at 7735:1, so beta above ~0.999999 is WORSE than the
+    # scheme it is meant to fix. Default 0.999 is the usefully bounded regime.
+    #
+    # The scale is dataset-specific and the difference is enormous: on binary
+    # PVEL-S both classes hold ~1e8 pixels, so every beta up to 0.9999999
+    # returns uniform weights and only 1-1e-9 differentiates at all. Cui et al.
+    # tuned beta for SAMPLE counts in the hundreds; on pixel counts the useful
+    # range moves by six orders of magnitude between datasets. Sweep it, and
+    # read the spread the training log prints rather than trusting a default.
+    cb_beta: float = 0.999
     epochs: int = 50
     batch_size: int = 8
     lr: float = 1e-3

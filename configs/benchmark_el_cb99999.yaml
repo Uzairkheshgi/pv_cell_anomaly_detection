@@ -1,0 +1,44 @@
+# Imbalance-remedy benchmark, 3 of 5. See PAPER_PLAN.md S3.3.
+#
+# S10.6 measured that median-frequency weighting costs 18-21 mIoU here. The
+# direction is already published (Recall Loss, arXiv 2106.14917) and so is the
+# bounded-ratio fix (Cui et al., CVPR 2019), so we are not proposing a remedy.
+# We are measuring which of the existing ones works, against the noise floor
+# in S10.7 -- which no paper in this domain has done.
+#
+# Class-balanced loss, beta 0.99999 -> spread 1283:1. Still below median
+# frequency's 7735:1, so this brackets it from underneath.
+#
+# Compare against configs/benchmark_el.yaml (no weighting, 57.61 +/- 0.47) and
+# configs/benchmark_el_weighted.yaml (median frequency, 7735:1, 39.76).
+name: benchmark_el_cb99999
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 cell features plus 16 defects. The masks already hold a class
+# index per pixel, so nothing is thresholded.
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+# The dataset ships its own val images, so val_frac is unused here.
+split_mode: predefined
+# Images are exactly 512x512, so tile 512 gives one tile each: 69 steps an
+# epoch, and the first run ran out of learning rate long before it converged.
+# 256/128 gives 9 tiles an image, ~620 steps, and doubles as augmentation.
+tile: 256
+stride: 128
+
+epochs: 120
+batch_size: 8
+encoder: resnet34
+# 70 val images make the loss noisy; patience 10 dropped the lr three times
+# while val loss was still falling.
+patience: 20
+
+class_weights: true
+weighting: balanced
+cb_beta: 0.99999

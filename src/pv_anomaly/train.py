@@ -24,7 +24,7 @@ from pv_anomaly.data import (
     stitch,
     tile_positions,
 )
-from pv_anomaly.losses import CEDiceLoss, median_frequency_weights
+from pv_anomaly.losses import CEDiceLoss, class_weights
 from pv_anomaly.metrics import evaluate, json_safe, report
 
 
@@ -236,15 +236,25 @@ def train(cfg: Config) -> dict:
 
     # Weights come from the training fold only; using the whole dataset would
     # leak test-set class statistics into the objective.
+    recall_weighting = cfg.class_weights and cfg.weighting == "recall"
     weights = (
-        median_frequency_weights(sets["train"].class_pixels())
+        class_weights(sets["train"].class_pixels(), cfg.weighting, cfg.cb_beta)
         if cfg.class_weights
         else None
     )
-    if weights is None:
+    if not cfg.class_weights:
         print("[data] class weights off")
+    elif recall_weighting:
+        print("[data] class weights: recall loss, recomputed per batch")
     else:
-        print(f"[data] class weights {[round(w, 2) for w in weights.tolist()]}")
+        # The spread is the number that matters: median frequency reaches
+        # 7735:1 on 29 classes, which is what costs ~20 mIoU (S10.6).
+        live = weights[weights > 0]
+        spread = (live.max() / live.min()).item() if live.numel() else 0.0
+        print(
+            f"[data] class weights ({cfg.weighting}) spread {spread:.1f}:1  "
+            f"{[round(w, 4) for w in weights.tolist()]}"
+        )
 
     model = smp.create_model(
         cfg.arch,
@@ -253,7 +263,9 @@ def train(cfg: Config) -> dict:
         in_channels=3,
         classes=cfg.num_classes,
     ).to(device)
-    loss_fn = CEDiceLoss(cfg.num_classes, weights, cfg.alpha).to(device)
+    loss_fn = CEDiceLoss(
+        cfg.num_classes, weights, cfg.alpha, recall_weighting=recall_weighting
+    ).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
