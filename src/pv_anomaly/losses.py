@@ -1,8 +1,8 @@
 """The training loss: weighted cross-entropy plus Dice.
 
-Defects are about 1% of pixels, so plain cross-entropy can score 99% by
-answering "background" everywhere. Weighting makes rare pixels count for more,
-and Dice measures overlap while ignoring background entirely.
+Defects are a small share of the pixels, so plain cross-entropy can score well
+by answering "background" everywhere. Class weights make rare pixels count for
+more, and Dice measures overlap while ignoring background.
 """
 
 from __future__ import annotations
@@ -16,18 +16,16 @@ from torch import nn
 def median_frequency_weights(
     pixel_counts: np.ndarray, clip: float = 20.0
 ) -> torch.Tensor:
-    """Work out how much each class should count for in the loss.
+    """Weight each class by the median class frequency over its own frequency.
 
-    A class holding few pixels gets a large weight, so missing it hurts more than
-    missing a common one. Classes with no pixels get 0 rather than infinity.
+    Rare classes get large weights and common ones small weights. So missing a rare class hurts the loss more than missing a common one.
 
     Args:
         pixel_counts: Pixel count per class.
-        clip: Largest allowed weight. Without it, a class holding 0.01% of pixels
-            would produce a gradient big enough to destabilise early training.
+        clip: Largest allowed weight.
 
     Returns:
-        One weight per class.
+        One weight per class. Classes with no pixels get 0.
 
     Raises:
         ValueError: If every count is zero.
@@ -45,18 +43,17 @@ def median_frequency_weights(
 def inverse_frequency_weights(
     pixel_counts: np.ndarray, clip: float = 20.0
 ) -> torch.Tensor:
-    """Weight each class by the reciprocal of its pixel frequency.
+    """Weight each class by one over its pixel frequency.
 
-    The most aggressive of the static schemes, and the one FARCLUSS reports as
-    causing gradient instability. Included so the benchmark covers the range
-    rather than only its middle.
+    The strongest of the fixed schemes. It is here so the comparison covers the
+    extreme case as well.
 
     Args:
         pixel_counts: Pixel count per class.
         clip: Largest allowed weight.
 
     Returns:
-        One weight per class. Absent classes get 0.
+        One weight per class. Classes with no pixels get 0.
     """
     counts = np.asarray(pixel_counts, dtype=float)
     freq = counts / counts.sum()
@@ -70,38 +67,24 @@ def inverse_frequency_weights(
 def class_balanced_weights(
     pixel_counts: np.ndarray, beta: float = 0.9999999
 ) -> torch.Tensor:
-    """Cui et al.'s class-balanced weights, CVPR 2019 (arXiv 1901.05555).
+    """Class-balanced weights from Cui et al., CVPR 2019 (arXiv 1901.05555).
 
-    Weights by the inverse "effective number" of samples,
-    `E_n = (1 - beta^n) / (1 - beta)`, which saturates at `1 / (1 - beta)`.
-    **Beta therefore bounds the ratio between the largest and smallest weight**
-    -- which is why this method, not any invention of ours, is the published
-    answer to median frequency's unbounded floor.
+    Each class is weighted by one over its "effective number" of pixels,
+    `(1 - beta^n) / (1 - beta)`. This number stops growing at `1 / (1 - beta)`,
+    so beta limits how far apart the largest and smallest weights can be.
 
-    The caveat that matters here: Cui et al. tuned beta for *sample* counts in
-    the hundreds. Ours are *pixel* counts of 1e5 to 1e8, and the useful range
-    moves with them. Measured on benchmark_el's 29-class train split, where
-    the smallest class holds 78 px:
-
-        beta      0.99   0.999   0.9999   0.99999   0.999999   0.9999999
-        spread    1.8:1  13.3:1  129:1    1283:1    12821:1    128195:1
-
-    Median frequency sits at 7735:1, so **beta above about 0.999999 produces a
-    wider spread than the scheme it is meant to fix.** On binary PVEL-S, where
-    both classes hold ~1e8 pixels, every beta up to 0.9999999 returns uniform
-    weights and only 1-1e-9 differentiates. The same beta is therefore useless
-    on one dataset and harmful on the other: the standard remedy does not
-    transfer to dense prediction without re-tuning by orders of magnitude, and
-    that is worth reporting in its own right.
+    The right beta depends on the dataset's pixel counts. On benchmark_el,
+    0.999 gives a spread of about 13:1 and 0.9999 about 129:1; values above
+    roughly 0.999999 spread the weights wider than median frequency does.
 
     Args:
         pixel_counts: Pixel count per class.
-        beta: In [0, 1). 0 is no re-weighting; closer to 1 approaches inverse
-            frequency. The weight ratio is capped at about 1 / (1 - beta).
+        beta: Between 0 and 1, not including 1. 0 gives equal weights; values
+            close to 1 approach inverse frequency.
 
     Returns:
-        One weight per class, normalised to sum to the number of present
-        classes. Absent classes get 0.
+        One weight per class, scaled so they sum to the number of classes that
+        have pixels. Classes with no pixels get 0.
     """
     counts = np.asarray(pixel_counts, dtype=float)
     weights = np.zeros_like(counts)
@@ -118,17 +101,17 @@ def class_weights(
     beta: float = 0.9999999,
     clip: float = 20.0,
 ) -> torch.Tensor | None:
-    """Pick a class-weighting scheme by name.
+    """Build the class weights for the chosen scheme.
 
     Args:
         pixel_counts: Pixel count per class, from the training split only.
         scheme: "median", "balanced", "inverse", or "recall".
-        beta: Passed to `class_balanced_weights`.
-        clip: Passed to the median and inverse schemes.
+        beta: Used by "balanced" only.
+        clip: Largest allowed weight, used by "median" and "inverse".
 
     Returns:
-        One weight per class, or None for "recall", which cannot be computed
-        up front because it depends on the model's current predictions.
+        One weight per class, or None for "recall", whose weights depend on the
+        model's predictions and are worked out per batch inside the loss.
 
     Raises:
         ValueError: If `scheme` is not one of the four names.
@@ -147,8 +130,8 @@ def class_weights(
 class CEDiceLoss(nn.Module):
     """Weighted cross-entropy and Dice, mixed by `alpha`.
 
-    Cross-entropy judges each pixel on its own; Dice judges whether the predicted
-    shape overlaps the real one. Using both works better than either alone.
+    Cross-entropy scores each pixel on its own. Dice scores how well the
+    predicted shape overlaps the real one. The loss uses both.
     """
 
     def __init__(
@@ -162,13 +145,13 @@ class CEDiceLoss(nn.Module):
 
         Args:
             num_classes: Number of pixel classes.
-            weights: Per-class weights for cross-entropy, or None for equal. (calculated by `median_frequency_weights`).
-            alpha: Share of cross-entropy. 0.5 means half each.
-            recall_weighting: Use Tian et al.'s recall loss (arXiv 2106.14917)
-                instead of `weights`: each class is weighted by `1 - recall`
-                recomputed from the current batch, so a class the model is
-                already getting right stops pulling on the gradient. Dynamic,
-                so it cannot be precomputed from pixel counts.
+            weights: Per-class weights for cross-entropy, from `class_weights`.
+                None weights every class equally.
+            alpha: Share of cross-entropy in the loss. 0.5 means half each.
+            recall_weighting: Use recall loss (Tian et al., arXiv 2106.14917)
+                instead of `weights`. Each class is weighted by `1 - recall`
+                on the current batch, so classes the model already finds
+                count for less.
 
         Raises:
             ValueError: If `alpha` is outside 0 to 1, or `weights` is the wrong
@@ -200,8 +183,7 @@ class CEDiceLoss(nn.Module):
             probs.sum(dims) + onehot.sum(dims) + 1e-6
         )
 
-        # Classes absent from the batch would otherwise score a free 1.0 and
-        # quietly weaken the signal on rare-defect batches.
+        # Skip classes absent from the batch; they would score a free 1.0.
         present = onehot.sum(dims)[1:] > 0
         dice_loss = 1 - dice[1:][present].mean() if present.any() else logits.sum() * 0
         weights = self.weights
@@ -212,19 +194,13 @@ class CEDiceLoss(nn.Module):
                 hit = torch.bincount(
                     flat[pred == flat], minlength=self.num_classes
                 ).float()
-                # A class the model already recalls perfectly gets weight 0;
-                # one it misses entirely gets 1. Classes absent from the batch
-                # get 0 rather than a spurious full weight.
+                # Weight is 1 - recall: 0 for a class already found, 1 for one missed.
+                # Absent classes get 0.
                 weights = 1.0 - hit / support.clamp(min=1.0)
                 weights[support == 0] = 0.0
         if weights is not None and not weights.any():
-            # Every class present in the batch is already recalled perfectly,
-            # so every recall weight is 0. Cross-entropy normalises by the sum
-            # of the weights, so this would divide by zero and return nan,
-            # killing the run. There is genuinely nothing to learn from such a
-            # batch, so the cross-entropy term contributes nothing -- written
-            # this way rather than as a plain 0.0 to keep the graph connected,
-            # the same trick the dice branch above uses.
+            # All weights are 0 when every class is already found, and cross-entropy
+            # would return nan. Use a zero that stays connected to the graph.
             ce = logits.sum() * 0
         else:
             ce = F.cross_entropy(logits, target, weight=weights)

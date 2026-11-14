@@ -24,25 +24,21 @@ class Config:
     image_glob: str = "*.jpg"
     mask_suffix: str = "_mask"  # images 0000.jpg -> masks 0000_mask.jpg
     mask_threshold: int = 127
-    mask_cache: int = 1024  # masks held in RAM, ~1 MB each; bounds growth
+    mask_cache: int = 1024  # masks kept in memory, ~1 MB each
     num_classes: int = 2
     # Which class indices are defects, for the defect-tile sampler and the
     # size-recall report. Empty means everything above background counts.
     defect_classes: tuple[int, ...] = ()
     max_images: int | None = None  # debug aid; None uses all
 
-    # Tile at native resolution instead of resizing: PVEL-S microcracks are a
-    # few pixels wide and do not survive a resize to 224.
+    # Tile at full resolution: thin cracks do not survive resizing.
     tile: int = 512
     stride: int = 256
-    # Resize whole images to this square size before tiling, for reproducing a
-    # paper that trains at a fixed small input: Ramadan et al. use 160x160.
-    # None keeps native resolution, which every result so far uses. Set tile
-    # and stride to the same value so each image becomes one exact tile.
+    # Resize whole images to this size before tiling. None keeps full resolution.
+    # Set tile and stride to the same value so each image is one tile.
     resize: int | None = None
 
-    # split: "predefined" honours the shipped train/test dirs (comparable with
-    # published numbers); "cv" pools everything into k folds (error bars).
+    # "predefined" uses the dataset's own folders; "cv" pools everything into k folds.
     split_mode: str = "predefined"
     n_folds: int = 5
     fold: int = 0
@@ -58,29 +54,14 @@ class Config:
 
     # optimisation
     alpha: float = 0.5  # loss = alpha * weighted CE + (1 - alpha) * Dice
-    # Median-frequency weights put background ~400x below the median class,
-    # which on a 29-class run leaves no reason to get background right. False
-    # weights every class equally.
+    # False weights every class equally.
     class_weights: bool = True
-    # Which scheme to use when class_weights is on. "median" reproduces every
-    # run before 2026-11-13. "balanced" is Cui et al.'s class-balanced loss
-    # (CVPR 2019), whose beta bounds the weight ratio at ~1/(1-beta) -- the
-    # published answer to median frequency's unbounded floor. "inverse" is
-    # plain inverse frequency. "recall" is Tian et al.'s recall loss, which is
-    # dynamic and recomputed per batch inside CEDiceLoss.
+    # Scheme used when class_weights is on: "median", "balanced" (class-balanced
+    # loss, Cui et al. 2019), "inverse", or "recall" (recomputed per batch).
     weighting: str = "median"
-    # Beta for weighting="balanced". It sets the weight spread at ~1/(1-beta),
-    # measured on benchmark_el's train split: 0.99 -> 1.8:1, 0.999 -> 13.3:1,
-    # 0.9999 -> 129:1, 0.99999 -> 1283:1, 0.9999999 -> 128,195:1. Median
-    # frequency sits at 7735:1, so beta above ~0.999999 is WORSE than the
-    # scheme it is meant to fix. Default 0.999 is the usefully bounded regime.
-    #
-    # The scale is dataset-specific and the difference is enormous: on binary
-    # PVEL-S both classes hold ~1e8 pixels, so every beta up to 0.9999999
-    # returns uniform weights and only 1-1e-9 differentiates at all. Cui et al.
-    # tuned beta for SAMPLE counts in the hundreds; on pixel counts the useful
-    # range moves by six orders of magnitude between datasets. Sweep it, and
-    # read the spread the training log prints rather than trusting a default.
+    # Beta for "balanced". Weight spread is about 1/(1-beta): 0.999 -> 13:1,
+    # 0.9999 -> 129:1. The useful range depends on the dataset, so check the
+    # spread printed in the training log.
     cb_beta: float = 0.999
     epochs: int = 50
     batch_size: int = 8

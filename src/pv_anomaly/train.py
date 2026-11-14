@@ -234,8 +234,7 @@ def train(cfg: Config) -> dict:
         + ", ".join(f"{k} {len(v.records)} ({len(v)} tiles)" for k, v in sets.items())
     )
 
-    # Weights come from the training fold only; using the whole dataset would
-    # leak test-set class statistics into the objective.
+    # Weights come from the training split only, so test data does not leak in.
     recall_weighting = cfg.class_weights and cfg.weighting == "recall"
     weights = (
         class_weights(sets["train"].class_pixels(), cfg.weighting, cfg.cb_beta)
@@ -247,8 +246,7 @@ def train(cfg: Config) -> dict:
     elif recall_weighting:
         print("[data] class weights: recall loss, recomputed per batch")
     else:
-        # The spread is the number that matters: median frequency reaches
-        # 7735:1 on 29 classes, which is what costs ~20 mIoU (S10.6).
+        # Print the spread (largest weight / smallest); a huge spread hurts training.
         live = weights[weights > 0]
         spread = (live.max() / live.min()).item() if live.numel() else 0.0
         print(
@@ -323,9 +321,7 @@ def train(cfg: Config) -> dict:
         # Written every epoch
         history.append({"epoch": epoch, "train": train_loss, "val": val_loss, "lr": lr})
         (cfg.run_dir / "history.json").write_text(json.dumps(history, indent=2))
-        # A broken loss comes out as "nan", and nan never counts as better than
-        # anything. So without this we would save nothing and keep going for
-        # nothing. Stop here instead and say why.
+        # A nan loss never counts as an improvement, so stop instead of training on.
         if not math.isfinite(val_loss):
             print(f"[stop] val loss is {val_loss} -- lower lr, or set amp: false")
             break
@@ -335,8 +331,7 @@ def train(cfg: Config) -> dict:
                 {"model": model.state_dict(), "epoch": epoch, "config": cfg.as_dict()},
                 checkpoint,
             )
-        # best.pt is the model we score; last.pt also carries the optimizer, so
-        # a run killed part way through can pick up where it stopped.
+        # best.pt is the model we score; last.pt also holds the optimizer, to resume.
         torch.save(
             {
                 "model": model.state_dict(),
