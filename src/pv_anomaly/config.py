@@ -60,6 +60,11 @@ class Config:
 
     # optimisation
     alpha: float = 0.5  # loss = alpha * weighted CE + (1 - alpha) * Dice
+    # clDice for thin classes (e.g. crack 14, gridline 15). The overlap term
+    # becomes (1 - cldice_weight) * Dice + cldice_weight * clDice. 0 is off.
+    cldice_classes: tuple[int, ...] = ()
+    cldice_weight: float = 0.0
+    cldice_iters: int = 5  # must exceed half the thickest line, in pixels
     # Median-frequency weights put background ~400x below the median class,
     # which on a 29-class run leaves no reason to get background right. False
     # weights every class equally.
@@ -95,6 +100,7 @@ class Config:
         cfg.root, cfg.out_dir = Path(cfg.root), Path(cfg.out_dir)
         cfg.splits = tuple(cfg.splits)
         cfg.defect_classes = tuple(cfg.defect_classes)
+        cfg.cldice_classes = tuple(cfg.cldice_classes)
         return cfg
 
     def as_dict(self) -> dict:

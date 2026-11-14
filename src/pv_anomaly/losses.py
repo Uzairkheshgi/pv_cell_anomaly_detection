@@ -42,6 +42,69 @@ def median_frequency_weights(
     return torch.from_numpy(np.clip(weights, 0.0, clip)).float()
 
 
+def soft_skeleton(x: torch.Tensor, iters: int) -> torch.Tensor:
+    """Thin a soft mask down to its centre lines, keeping it differentiable.
+
+    Repeatedly erodes the mask with min-pooling and keeps whatever an opening
+    would remove at each step, which is the ridge of the shape. This is the
+    soft skeleton of Shit et al., "clDice", CVPR 2021 (arXiv 2003.07311).
+
+    Args:
+        x: Probabilities or a binary mask, shaped (batch, classes, height, width).
+        iters: Erosion steps. Must exceed half the width of the thickest line,
+            or the thick parts are erased before their centre is found.
+
+    Returns:
+        The soft skeleton, same shape as `x`.
+    """
+
+    def erode(t):
+        return -F.max_pool2d(-t, 3, 1, 1)
+
+    def dilate(t):
+        return F.max_pool2d(t, 3, 1, 1)
+
+    skel = F.relu(x - dilate(erode(x)))
+    for _ in range(iters):
+        x = erode(x)
+        delta = F.relu(x - dilate(erode(x)))
+        skel = skel + F.relu(delta - skel * delta)
+    return skel
+
+
+def cldice_loss(
+    probs: torch.Tensor, onehot: torch.Tensor, classes: list[int], iters: int
+) -> torch.Tensor:
+    """Score how well thin structures keep their shape, for the given classes.
+
+    Topology precision is the share of the predicted skeleton that lies inside
+    the true mask; topology sensitivity is the share of the true skeleton the
+    prediction covers. clDice is their harmonic mean. A crack predicted as
+    broken pieces loses sensitivity even when its pixel overlap is high.
+
+    Args:
+        probs: Softmax output, shaped (batch, classes, height, width).
+        onehot: One-hot target, same shape.
+        classes: Class indices to score, e.g. crack and gridline.
+        iters: Skeleton erosion steps, see `soft_skeleton`.
+
+    Returns:
+        1 − mean clDice over the listed classes present in the batch, or a zero
+        that stays on the graph if none of them is present.
+    """
+    pred, true = probs[:, classes], onehot[:, classes]
+    present = true.sum((0, 2, 3)) > 0
+    if not present.any():
+        return probs.sum() * 0
+    pred, true = pred[:, present], true[:, present]
+    skel_pred, skel_true = soft_skeleton(pred, iters), soft_skeleton(true, iters)
+    dims = (0, 2, 3)
+    tprec = ((skel_pred * true).sum(dims) + 1e-6) / (skel_pred.sum(dims) + 1e-6)
+    tsens = ((skel_true * pred).sum(dims) + 1e-6) / (skel_true.sum(dims) + 1e-6)
+    cl = 2 * tprec * tsens / (tprec + tsens)
+    return 1 - cl.mean()
+
+
 class CEDiceLoss(nn.Module):
     """Weighted cross-entropy and Dice, mixed by `alpha`.
 
@@ -50,7 +113,13 @@ class CEDiceLoss(nn.Module):
     """
 
     def __init__(
-        self, num_classes: int, weights: torch.Tensor | None = None, alpha: float = 0.5
+        self,
+        num_classes: int,
+        weights: torch.Tensor | None = None,
+        alpha: float = 0.5,
+        cldice_classes: tuple[int, ...] = (),
+        cldice_weight: float = 0.0,
+        cldice_iters: int = 5,
     ):
         """Set up the loss.
 
@@ -58,6 +127,11 @@ class CEDiceLoss(nn.Module):
             num_classes: Number of pixel classes.
             weights: Per-class weights for cross-entropy, or None for equal. (calculated by `median_frequency_weights`).
             alpha: Share of cross-entropy. 0.5 means half each.
+            cldice_classes: Thin-structure classes scored by clDice as well as
+                Dice. Empty turns clDice off.
+            cldice_weight: Share of the overlap term given to clDice; the rest
+                stays Dice. 0 turns clDice off.
+            cldice_iters: Skeleton erosion steps, see `soft_skeleton`.
 
         Raises:
             ValueError: If `alpha` is outside 0 to 1, or `weights` is the wrong
@@ -69,6 +143,8 @@ class CEDiceLoss(nn.Module):
         if weights is not None and weights.numel() != num_classes:
             raise ValueError("weights length must equal num_classes")
         self.num_classes, self.alpha = num_classes, alpha
+        self.cldice_classes = list(cldice_classes)
+        self.cldice_weight, self.cldice_iters = cldice_weight, cldice_iters
         self.register_buffer("weights", None if weights is None else weights.float())
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -93,4 +169,12 @@ class CEDiceLoss(nn.Module):
         present = onehot.sum(dims)[1:] > 0
         dice_loss = 1 - dice[1:][present].mean() if present.any() else logits.sum() * 0
         ce = F.cross_entropy(logits, target, weight=self.weights)
-        return self.alpha * ce + (1 - self.alpha) * dice_loss
+        overlap = dice_loss
+        if self.cldice_weight > 0 and self.cldice_classes:
+            # Run the skeleton in float32: under mixed precision the repeated
+            # pooling of near-zero probabilities loses too much in float16.
+            cl = cldice_loss(
+                probs.float(), onehot, self.cldice_classes, self.cldice_iters
+            )
+            overlap = (1 - self.cldice_weight) * dice_loss + self.cldice_weight * cl
+        return self.alpha * ce + (1 - self.alpha) * overlap
