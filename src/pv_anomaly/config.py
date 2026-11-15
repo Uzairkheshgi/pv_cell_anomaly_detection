@@ -65,6 +65,8 @@ class Config:
     cldice_classes: tuple[int, ...] = ()
     cldice_weight: float = 0.0
     cldice_iters: int = 5  # must exceed half the thickest line, in pixels
+    # True keeps Dice at full weight and adds cldice_weight * clDice on top.
+    cldice_add: bool = False
     # Median-frequency weights put background ~400x below the median class,
     # which on a 29-class run leaves no reason to get background right. False
     # weights every class equally.

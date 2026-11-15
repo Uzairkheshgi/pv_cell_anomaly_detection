@@ -301,11 +301,13 @@ def train(cfg: Config) -> dict:
         cfg.cldice_classes,
         cfg.cldice_weight,
         cfg.cldice_iters,
+        cfg.cldice_add,
     ).to(device)
     if cfg.cldice_weight > 0 and cfg.cldice_classes:
         print(
             f"[loss] clDice on classes {list(cfg.cldice_classes)}, "
-            f"weight {cfg.cldice_weight}, {cfg.cldice_iters} skeleton steps"
+            f"weight {cfg.cldice_weight}, {cfg.cldice_iters} skeleton steps, "
+            f"{'added to' if cfg.cldice_add else 'mixed with'} Dice"
         )
     optimizer = torch.optim.Adam(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay

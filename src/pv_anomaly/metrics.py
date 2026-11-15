@@ -106,7 +106,8 @@ def evaluate(
             and the two curve scores. Empty means every class above background.
 
     Returns:
-        A dict of per-class IoU and F1, their averages, AUPRC, AUROC, and the
+        A dict of per-class IoU, F1, precision and recall, their averages,
+        the confusion matrix, AUPRC, AUROC, and the
         size breakdown. AUPRC and AUROC are None if the sample held only one
         class, since both are undefined then.
     """
@@ -142,20 +143,37 @@ def evaluate(
     # it does not, so a plain nanmean mixes real zeros with unscoreable ones.
     support = cm.sum(1)
     scored = support > 0
+    with np.errstate(invalid="ignore"):
+        recall = np.where(scored, tp / support, np.nan)
+        # A scored class the model never predicts gets precision 0, not nan:
+        # skipping it would reward a model for staying silent on hard classes.
+        precision = np.where(tp + fp > 0, tp / (tp + fp), np.nan)
+    precision[scored & (tp + fp == 0)] = 0.0
     picked = [i for i in (defects or range(1, n)) if scored[i]]
 
     out = {
         "iou": iou.tolist(),
         "f1": f1.tolist(),
+        "precision": precision.tolist(),
+        "recall": recall.tolist(),
         "support": support.tolist(),
         "classes_scored": int(scored.sum()),
         "mean_iou": float(np.nanmean(iou[scored])),
         "macro_f1": float(np.nanmean(f1[scored])),
+        "macro_precision": float(np.nanmean(precision[scored])),
+        "macro_recall": float(np.nanmean(recall[scored])),
         "defect_mean_iou": float(np.nanmean(iou[picked])) if picked else None,
+        "defect_mean_precision": (
+            float(np.nanmean(precision[picked])) if picked else None
+        ),
+        "defect_mean_recall": float(np.nanmean(recall[picked])) if picked else None,
         "defect_classes_scored": len(picked),
         "auprc": None,
         "auroc": None,
         "size_recall": _buckets(hits, totals),
+        # Rows are true classes, columns predicted. Kept so any later metric
+        # can be worked out from a finished run without scoring it again.
+        "confusion": cm.tolist(),
     }
 
     # AUPRC is the right summary under this imbalance, but both it and AUROC
@@ -179,23 +197,37 @@ def report(metrics: dict, class_names: list[str]) -> str:
         A multi-line string.
     """
 
-    lines = [f"{'class':<12}{'IoU':>8}{'F1':>8}{'support':>14}"]
-    for name, iou, f1, support in zip(
-        class_names, metrics["iou"], metrics["f1"], metrics["support"]
+    lines = [f"{'class':<12}{'IoU':>8}{'F1':>8}{'prec':>8}{'recall':>8}{'support':>14}"]
+    for name, iou, f1, prec, rec, support in zip(
+        class_names,
+        metrics["iou"],
+        metrics["f1"],
+        metrics["precision"],
+        metrics["recall"],
+        metrics["support"],
     ):
-        lines.append(f"{name:<12}{iou * 100:>8.2f}{f1 * 100:>8.2f}{support:>14,}")
+        lines.append(
+            f"{name:<12}{iou * 100:>8.2f}{f1 * 100:>8.2f}{prec * 100:>8.2f}"
+            f"{rec * 100:>8.2f}{support:>14,}"
+        )
     scored = metrics["classes_scored"]
     lines.append(
         f"{'mean IoU':<12}{metrics['mean_iou'] * 100:>8.2f}"
         f"{'':>8}{f'over {scored} scored':>14}"
     )
     lines.append(f"{'macro F1':<12}{metrics['macro_f1'] * 100:>8.2f}")
+    lines.append(f"{'macro prec':<12}{metrics['macro_precision'] * 100:>8.2f}")
+    lines.append(f"{'macro rec':<12}{metrics['macro_recall'] * 100:>8.2f}")
     if metrics["defect_mean_iou"] is not None:
         picked = metrics["defect_classes_scored"]
         lines.append(
             f"{'defect IoU':<12}{metrics['defect_mean_iou'] * 100:>8.2f}"
             f"{'':>8}{f'over {picked} scored':>14}"
         )
+        lines.append(
+            f"{'defect prec':<12}{metrics['defect_mean_precision'] * 100:>8.2f}"
+        )
+        lines.append(f"{'defect rec':<12}{metrics['defect_mean_recall'] * 100:>8.2f}")
     for key in ("auprc", "auroc"):
         if metrics[key] is not None:
             lines.append(f"{'pixel ' + key.upper():<12}{metrics[key] * 100:>8.2f}")
