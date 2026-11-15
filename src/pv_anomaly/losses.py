@@ -120,6 +120,7 @@ class CEDiceLoss(nn.Module):
         cldice_classes: tuple[int, ...] = (),
         cldice_weight: float = 0.0,
         cldice_iters: int = 5,
+        cldice_add: bool = False,
     ):
         """Set up the loss.
 
@@ -132,6 +133,9 @@ class CEDiceLoss(nn.Module):
             cldice_weight: Share of the overlap term given to clDice; the rest
                 stays Dice. 0 turns clDice off.
             cldice_iters: Skeleton erosion steps, see `soft_skeleton`.
+            cldice_add: If True, Dice keeps its full weight and clDice is added
+                on top, scaled by `cldice_weight`. If False, the two share the
+                overlap term.
 
         Raises:
             ValueError: If `alpha` is outside 0 to 1, or `weights` is the wrong
@@ -145,6 +149,7 @@ class CEDiceLoss(nn.Module):
         self.num_classes, self.alpha = num_classes, alpha
         self.cldice_classes = list(cldice_classes)
         self.cldice_weight, self.cldice_iters = cldice_weight, cldice_iters
+        self.cldice_add = cldice_add
         self.register_buffer("weights", None if weights is None else weights.float())
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -176,5 +181,10 @@ class CEDiceLoss(nn.Module):
             cl = cldice_loss(
                 probs.float(), onehot, self.cldice_classes, self.cldice_iters
             )
-            overlap = (1 - self.cldice_weight) * dice_loss + self.cldice_weight * cl
+            if self.cldice_add:
+                # Dice covers every class and clDice only a few, so mixing them
+                # took half the Dice signal from all the others (§10.11).
+                overlap = dice_loss + self.cldice_weight * cl
+            else:
+                overlap = (1 - self.cldice_weight) * dice_loss + self.cldice_weight * cl
         return self.alpha * ce + (1 - self.alpha) * overlap
