@@ -91,6 +91,18 @@ def test_iou_is_nan_for_a_class_that_never_appears():
     assert np.isnan(evaluate([(zeros, zeros, zeros.astype(np.float32))], 3)["iou"][2])
 
 
+def test_precision_and_recall_per_class():
+    target = np.array([[1, 1, 1, 1], [0, 0, 0, 2]], np.uint8)
+    pred = np.array([[1, 1, 0, 0], [1, 0, 0, 0]], np.uint8)
+    m = evaluate([(target, pred, (pred > 0).astype(np.float32))], 3)
+    # class 1: 2 of 3 predicted are right, 2 of 4 true are found
+    assert m["precision"][1] == pytest.approx(2 / 3)
+    assert m["recall"][1] == pytest.approx(0.5)
+    # class 2 is present but never predicted: precision 0, not nan
+    assert m["precision"][2] == 0.0 and m["recall"][2] == 0.0
+    assert np.array(m["confusion"]).sum() == target.size
+
+
 def test_auprc_is_none_on_a_single_class_fold():
     """Undefined with no positives -- must be None, not a crash."""
     zeros = np.zeros((16, 16), np.uint8)

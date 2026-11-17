@@ -47,7 +47,9 @@ class Config:
     n_folds: int = 5
     fold: int = 0
     val_frac: float = 0.15
-    seed: int = 1337
+    seed: int = 1337  # data split only; don't change
+    # Training seed. Same seed = same run. None = random.
+    train_seed: int | None = None
 
     # model
     arch: str = "unet"

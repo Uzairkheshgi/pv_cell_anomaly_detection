@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import sys
 import time
 from pathlib import Path
@@ -42,6 +43,38 @@ def resolve_device(name: str) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def seed_everything(seed: int) -> torch.Generator:
+    """Seed Python, NumPy and PyTorch, on the CPU and every GPU.
+
+    Args:
+        seed: The training seed.
+
+    Returns:
+        A generator seeded the same way, for the sampler and the loaders.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    return torch.Generator().manual_seed(seed)
+
+
+def seed_worker(worker_id: int) -> None:
+    """Give each DataLoader worker its own augmentation stream.
+
+    Albumentations keeps its own generator and ignores global seeds. Without
+    this, every worker gets a copy of the same generator, so all workers draw
+    the same augmentations and repeat them every epoch. PyTorch gives each
+    worker a different `initial_seed` each epoch, derived from the loader's
+    generator, so this is reproducible when training is seeded and fresh
+    when it is not.
+
+    Args:
+        worker_id: Index of the worker, unused; the seed already differs.
+    """
+    info = torch.utils.data.get_worker_info()
+    info.dataset.transform.set_random_seed(torch.initial_seed() % 2**32)
+
+
 def subsample(records, cfg):
     """used only for quick experiments, to reduce the number of images used.
     Cut the image list down for quick runs, keeping every split present.
@@ -65,7 +98,9 @@ def subsample(records, cfg):
     return kept
 
 
-def defect_sampler(dataset: Tiles, frac: float) -> WeightedRandomSampler | None:
+def defect_sampler(
+    dataset: Tiles, frac: float, generator: torch.Generator | None = None
+) -> WeightedRandomSampler | None:
     """Build a sampler that draws defect tiles more often.
 
     Most tiles of a cell hold no defect, so picking tiles evenly would spend the
@@ -75,6 +110,7 @@ def defect_sampler(dataset: Tiles, frac: float) -> WeightedRandomSampler | None:
     Args:
         dataset: The training tiles.
         frac: Share of each batch to draw from defect tiles.
+        generator: Random source for the draws, or None for the global one.
 
     Returns:
         A sampler, or None when there is nothing to rebalance.
@@ -85,7 +121,7 @@ def defect_sampler(dataset: Tiles, frac: float) -> WeightedRandomSampler | None:
     weights = np.full(len(dataset), (1 - frac) / (len(dataset) - n_defect))
     weights[dataset.defect] = frac / n_defect
     return WeightedRandomSampler(
-        torch.from_numpy(weights), len(dataset), replacement=True
+        torch.from_numpy(weights), len(dataset), replacement=True, generator=generator
     )
 
 
@@ -206,6 +242,11 @@ def train(cfg: Config) -> dict:
     cfg.run_dir.mkdir(parents=True, exist_ok=True)
     cfg.save(cfg.run_dir / "config.yaml")
     print(f"[run] {cfg.run_dir}  device={device}")
+    # Seed before anything random happens, including the decoder's weights.
+    generator = None
+    if cfg.train_seed is not None:
+        generator = seed_everything(cfg.train_seed)
+        print(f"[seed] training seed {cfg.train_seed}")
 
     records = index_dataset(
         cfg.root,
@@ -269,10 +310,15 @@ def train(cfg: Config) -> dict:
             batch_size=cfg.batch_size,
             num_workers=cfg.num_workers,
             pin_memory=device.type == "cuda",
+            worker_init_fn=seed_worker,
+            generator=generator,
             **kwargs,
         )
 
-    sampler = defect_sampler(sets["train"], cfg.defect_frac)
+    if cfg.train_seed is not None:
+        # With num_workers 0 the main process does the augmenting.
+        sets["train"].transform.set_random_seed(cfg.train_seed)
+    sampler = defect_sampler(sets["train"], cfg.defect_frac, generator)
     train_loader = loader(
         sets["train"],
         sampler=sampler,
@@ -364,10 +410,11 @@ def main() -> None:
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--device")
     parser.add_argument("--resume", action="store_true", default=None)
+    parser.add_argument("--train-seed", type=int, dest="train_seed")
     args = parser.parse_args()
 
     cfg = Config.load(args.config)
-    for key in ("fold", "epochs", "device", "resume"):
+    for key in ("fold", "epochs", "device", "resume", "train_seed"):
         if getattr(args, key) is not None:
             setattr(cfg, key, getattr(args, key))
     train(cfg)
