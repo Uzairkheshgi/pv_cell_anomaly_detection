@@ -1,0 +1,24 @@
+# 160x160 input with the same number of training steps as the baseline.
+# Epoch counts are 8.9x the baseline's (one tile per image, not nine).
+name: benchmark_el_160_long
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 features + 16 defects
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+split_mode: predefined  # dataset ships its own val/test split
+resize: 160
+tile: 160
+stride: 160
+
+epochs: 1068  # = 120 baseline epochs
+batch_size: 8
+encoder: resnet34
+class_weights: false
+patience: 178  # = 20 baseline epochs

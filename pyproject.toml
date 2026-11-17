@@ -3,10 +3,8 @@ name = "pv-cell-anomaly-detection"
 version = "0.1.0"
 description = "Supervised defect segmentation on electroluminescence images of PV cells"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "torch>=2.6",
-    "torchvision>=0.21",
     "segmentation-models-pytorch>=0.4",
     "albumentations>=2.0",
     "numpy>=2.0",
@@ -20,6 +18,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+# torch comes from one of two groups. cpu is the default, so `uv sync` on a
+# machine without a GPU does the right thing; `--no-group cpu --group gpu` on a
+# GPU box pulls the CUDA build instead.
+[dependency-groups]
+cpu = ["torch>=2.6", "torchvision>=0.21"]
+gpu = ["torch>=2.6", "torchvision>=0.21"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -30,14 +35,28 @@ packages = ["src/pv_anomaly"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# CPU-only PyTorch. `explicit = true` means this index is consulted ONLY for
-# the packages mapped to it below -- everything else still resolves from PyPI.
-# Without it, uv would search the PyTorch index for every dependency.
+[tool.uv]
+default-groups = ["cpu"]
+conflicts = [[{ group = "cpu" }, { group = "gpu" }]]
+
+# `explicit = true` means an index is used ONLY for the packages mapped to it
+# below. Without it, uv would search the PyTorch index for everything.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
+torch = [
+    { index = "pytorch-cpu", group = "cpu" },
+    { index = "pytorch-cuda", group = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", group = "cpu" },
+    { index = "pytorch-cuda", group = "gpu" },
+]

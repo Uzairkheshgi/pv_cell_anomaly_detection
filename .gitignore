@@ -15,3 +15,6 @@ runs/
 *.pt
 *.ckpt
 *.zip
+kaggle/
+predictions/
+EXPERIMENTS*

@@ -1,0 +1,18 @@
+# PVEL-S at Ramadan et al.'s 160x160 input (1 tile per image).
+name: pvels_160
+root: data/pv_kaggle/PVEL_S
+image_dir: defect
+mask_dir: label
+image_glob: "*.jpg"
+mask_suffix: _mask
+
+split_mode: predefined
+resize: 160
+tile: 160
+stride: 160
+
+class_weights: false
+
+epochs: 600  # epochs are 9x shorter here
+batch_size: 8
+encoder: resnet34
