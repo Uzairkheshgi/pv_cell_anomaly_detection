@@ -1,3 +1,4 @@
+# First PVEL-S run (50 epochs).
 name: pvels
 root: data/pv_kaggle/PVEL_S
 image_dir: defect
