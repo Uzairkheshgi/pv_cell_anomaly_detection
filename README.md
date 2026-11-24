@@ -125,6 +125,7 @@ the config file. Everything else is set in YAML, with defaults in
 | `benchmark_el_dlv3p_weighted.yaml` | DeepLabv3+ with median-frequency weights |
 | `benchmark_el_cldice.yaml` | baseline + clDice on crack and gridline, mixed 50/50 with Dice |
 | `benchmark_el_cldice_add.yaml` | baseline + 0.2 × clDice on crack, added on top of Dice |
+| `benchmark_el_cldice_add_long.yaml` | the clDice run above, up to 250 epochs |
 | `cpu_smoke.yaml` | 2 epochs on 60 images, for a quick check |
 
 The class-balanced, inverse-frequency and recall-loss schemes are on the

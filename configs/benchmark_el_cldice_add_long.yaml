@@ -1,0 +1,27 @@
+# Baseline + clDice (crack only), trained up to 250 epochs instead of 120.
+name: benchmark_el_cldice_add_long
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 features + 16 defects
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+split_mode: predefined  # dataset ships its own val/test split
+tile: 256  # 9 tiles per 512 image
+stride: 128
+
+epochs: 250  # 120-epoch runs were still improving at the end
+batch_size: 8
+encoder: resnet34
+class_weights: false  # weighting costs ~18 mIoU here
+patience: 20  # val set is small, so loss is noisy
+
+cldice_classes: [14]  # crack
+cldice_weight: 0.2
+cldice_iters: 5
+cldice_add: true  # loss = Dice + 0.2 * clDice
