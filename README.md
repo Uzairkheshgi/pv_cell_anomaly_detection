@@ -1,65 +1,37 @@
 # PV Cell Anomaly Detection
 
-Finds defects in electroluminescence (EL) photos of solar cells, marking which
-pixels are faulty. See [APPROACH.md](APPROACH.md) for why it is built this way.
+Finds defects in electroluminescence (EL) images of solar cells and marks which
+pixels are faulty. It supports binary segmentation on PVEL-S (defect or not)
+and 29-class segmentation on Benchmark EL.
 
 ## Results
 
-Two datasets, two tasks. Method, ablations, error bars and negative results are
-in **[EXPERIMENTS.md](EXPERIMENTS.md)**.
+### Benchmark EL (29 classes)
 
-### Benchmark EL — 29-class segmentation
+Test split of 72 images, scored over the 23 classes that have test pixels.
+The reference model is a hybrid CNN–Transformer
+([*Scientific Reports*, 2026](https://doi.org/10.1038/s41598-026-57859-7));
+its values are its per-class F1 converted to IoU.
 
-Held-out test split, mean ± sd over **four repeated runs**, scored on the 23
-classes actually present in the test set:
+| | U-Net + ResNet-34 (4 runs) | DeepLabv3+ (1 run) | reference model (1 run) |
+|---|---|---|---|
+| mean IoU, 23 classes | **57.61 ± 0.47** | 58.29 | 53.55 |
+| defect mean IoU, 12 classes | 38.32 ± 1.18 | 40.21 | 37.98 |
+| pixel-weighted IoU | 91.26 ± 0.17 | 90.99 | 91.20 |
 
-| | this work | Ramadan et al. (2026) |
-|---|---|---|
-| mean IoU (23 classes) | **57.61 ± 0.47** | 53.55 |
-| defect classes (12) | 38.32 ± 1.18 | 37.98 |
-| background | 93.58 ± 0.15 | 93.70 |
-| support-weighted IoU | 91.26 ± 0.17 | 91.20 |
+DeepLabv3+ and U-Net differ by less than run-to-run noise.
 
-Ahead on the aggregate, level on defects and background. Class identities are
-pinned to the dataset's own `ListOfClassesAndColorCodes_20221008.csv` rather
-than guessed from class names.
+### PVEL-S (binary)
 
-### PVEL-S — binary defect segmentation
+Test split of 360 images, U-Net + ResNet-34:
 
-Held-out 360-image test split, U-Net + ResNet-34, native-resolution tiling:
-**92.0% defect IoU** at a threshold chosen on validation (vs 90.4% at the
-default 0.5 — +2.75 precision for −1.23 recall).
+| | defect IoU |
+|---|---|
+| no class weights, threshold 0.5 (3 runs) | 91.49 ± 0.45 |
+| class weights, threshold 0.90 chosen on val (1 run) | 92.01 |
+| reference model (1 run, 160 × 160, no separate test split) | 93.89 |
 
-### Three findings worth the reading
-
-**1. Median-frequency class weighting is actively harmful here — it costs
-17.7 to 20.6 mIoU.** A full 2×2 factorial over {tile size} × {class weighting}
-shows the weighting accounts for essentially the entire difference between a
-failed run and a working one, while tile size, stride and gradient-step count
-all fall inside run-to-run noise. The cause is the *floor*, not the cap:
-median-frequency weights hand background 0.0026 against a clipped maximum of
-20.0, a 7,735:1 ratio, leaving no reason to get 65% of the pixels right.
-[§10.6]
-
-**2. Per-class results in this literature do not replicate at the precision
-they are quoted to.** Four runs of an identical config — nothing in the
-training loop is seeded — give an aggregate sd of 0.47 mIoU but a *mean
-per-class* sd of 1.81, worst case 5.42 (`busbars` swings 13.2 points). Any
-per-class claim from a single run, ours or anyone's, is unsafe. [§10.7]
-
-**3. Evaluation resolution does not do what it is assumed to do.** Rescoring
-one model's predictions across twelve grids from 1024² down to 64²: pooled-pixel
-IoU is **flat** (91.48 → 91.62 across a 41× pixel reduction), so coarse-grid
-evaluation does *not* inflate the headline metric. What it does destroy is
-per-image performance — macro IoU falls 62.45 → 59.46 at 160² and collapses to
-49.00 at 64² — because downsampling deletes small defects outright. This result
-contradicted our own prior hypothesis and is reported as such. [§8.4]
-
-A fourth, which drives all of the above: **the headline metric describes the
-easy third of the dataset.** Micro IoU 92.0 against macro IoU 62.5 — a
-29.6-point gap. Images with <1% defect area carry 1.4% of defect pixels and
-score 43.4 macro; images over 10% carry 97.1% of the pixels and score 91.2.
-[§5.5]
+Full results and analysis are in [EXPERIMENTS.md](EXPERIMENTS.md).
 
 ## Setup
 
@@ -69,8 +41,7 @@ uv sync --extra dev
 uv run pytest -q
 ```
 
-PyTorch installs the CPU-only build by default. For a GPU, pull the CUDA 12.6
-build instead:
+This installs the CPU build of PyTorch. For a GPU, use the CUDA 12.6 build:
 
 ```bash
 uv sync --extra dev --no-group cpu --group gpu
@@ -78,35 +49,33 @@ uv sync --extra dev --no-group cpu --group gpu
 
 ## Data
 
-Two datasets are supported. Both live under `data/`, which git ignores.
+Both datasets go under `data/`, which git ignores.
 
-### PVEL-S (binary: defect or not)
+### PVEL-S
 
-[PVEL-S](https://www.kaggle.com/datasets/yaozhang01182010/dataset-of-solar-cells-defect-segmentation)
-— 1,200 EL images, already split 840 train / 360 test. Extract to
-`data/pv_kaggle/PVEL_S`:
+[PVEL-S](https://www.kaggle.com/datasets/yaozhang01182010/dataset-of-solar-cells-defect-segmentation):
+1,200 EL images, split 840 train / 360 test. Extract to `data/pv_kaggle/PVEL_S`:
 
 ```
-PVEL_S/{train,test}/defect/0000.jpg        the photo
-PVEL_S/{train,test}/label/0000_mask.jpg    where the defect is
+PVEL_S/{train,test}/defect/0000.jpg        image
+PVEL_S/{train,test}/label/0000_mask.jpg    defect mask
 ```
 
-Masks are JPEG, so their edges are smudged and get cut at 127 rather than 0.
-Sizes are mixed, 1024px and 512px. Every image has a defect — there are no
-clean cells. The 840 training images lose 15% to a validation group, so
-training sees 714.
+- Masks are JPEG, so they are thresholded at 127.
+- Images are 1024 px or 512 px.
+- Every image contains a defect.
+- 15% of the training images are held back for validation, so training uses 714.
 
-### Benchmark EL (multi-class: 29 classes)
+### Benchmark EL
 
 [BenchmarkELimages](https://github.com/TheMakiran/BenchmarkELimages) (Pratt et
-al., 2023) — 512px cell images with a class index painted on every pixel: 13
-cell features (busbars, ribbons, border, …) and 16 defect types (crack,
-inactive, corrosion, …). The class list is in
+al., 2023): 512 px cell images where each pixel holds a class index, 13 cell
+features and 16 defect types. Class names are in
 `ListOfClassesAndColorCodes_20221008.csv` inside the zip.
 
-Use the `dataset_20221008` folder, and leave out the `flip_`, `mirror_` and
-`rotate_` copies in its train folder. Training already flips and turns images
-on the fly, and the shipped copies would let one cell appear four times.
+Use the `dataset_20221008` folder, and skip the `flip_`, `mirror_` and
+`rotate_` copies in its train folder. Training already flips and rotates
+images, and those copies would put each cell in the training set four times.
 
 ```bash
 unzip -q data/BenchmarkELimages-main.zip -d /tmp/bel
@@ -122,187 +91,136 @@ for split in train val test; do
 done
 ```
 
-That gives 553 train / 70 val / 72 test, laid out as:
+This gives 553 train / 70 val / 72 test images:
 
 ```
-benchmark_el/{train,val,test}/images/ARTS_00001_r4_c2.png   the photo
+benchmark_el/{train,val,test}/images/ARTS_00001_r4_c2.png   image
 benchmark_el/{train,val,test}/masks/ARTS_00001_r4_c2.png    class index per pixel
 ```
-
-The dataset ships its own val group, so it is used as is and `val_frac` is
-ignored.
 
 ## Training
 
 ```bash
-# Full run on the shipped PVEL-S 840/360 split
-uv run python -m pv_anomaly.train --config configs/pvels.yaml
-
-# Multi-class run on Benchmark EL
 uv run python -m pv_anomaly.train --config configs/benchmark_el.yaml
-
-# Quick check on 60 images, CPU only
-uv run python -m pv_anomaly.train --config configs/cpu_smoke.yaml
-
-# Pick up an interrupted run
-uv run python -m pv_anomaly.train --config configs/pvels.yaml --resume
-
-# Five folds, for error bars (needs split_mode: cv)
-for f in 0 1 2 3 4; do
-  uv run python -m pv_anomaly.train --config configs/pvels.yaml --fold $f
-done
 ```
 
-`--fold`, `--epochs`, `--device` and `--resume` override the config file.
-Everything else is set in YAML; defaults are in `src/pv_anomaly/config.py`.
+Command-line options `--fold`, `--epochs`, `--device`, `--resume` and `--train-seed` override
+the config file. Everything else is set in YAML, with defaults in
+`src/pv_anomaly/config.py`.
+
+| Config | What it runs |
+|---|---|
+| `pvels.yaml` | PVEL-S, with class weights |
+| `pvels_nowt.yaml` | PVEL-S, no class weights |
+| `pvels_160.yaml` | PVEL-S resized to 160 × 160 |
+| `benchmark_el.yaml` | **Benchmark EL baseline**: U-Net, 256 px tiles, no class weights |
+| `benchmark_el_weighted.yaml` | baseline + median-frequency class weights |
+| `benchmark_el_tile512.yaml` | baseline with 512 px tiles |
+| `benchmark_el_stride256.yaml` | baseline with no tile overlap |
+| `benchmark_el_short.yaml` | baseline cut to 15 epochs (training-budget control) |
+| `benchmark_el_160.yaml` | resized to 160 × 160, epoch-based patience (stops too early) |
+| `benchmark_el_160_long.yaml` | resized to 160 × 160, patience matched in steps |
+| `benchmark_el_dlv3p.yaml` | baseline with DeepLabv3+ instead of U-Net |
+| `benchmark_el_dlv3p_weighted.yaml` | DeepLabv3+ with median-frequency weights |
+| `benchmark_el_cldice.yaml` | baseline + clDice on crack and gridline, mixed 50/50 with Dice |
+| `benchmark_el_cldice_add.yaml` | baseline + 0.2 × clDice on crack, added on top of Dice |
+| `cpu_smoke.yaml` | 2 epochs on 60 images, for a quick check |
+
+The class-balanced, inverse-frequency and recall-loss schemes are on the
+`class-weighting-ablation` branch.
 
 Each run writes to `runs/<name>_<split>/`:
 
-| File | What it holds |
+| File | Contents |
 |---|---|
 | `config.yaml` | every setting the run used |
 | `split.json` | which images went to train, val and test |
-| `history.json` | train and val loss per epoch, rewritten every epoch |
+| `history.json` | train and val loss per epoch |
 | `metrics.json` | test scores |
-| `best.pt` | the model with the lowest val loss — the one that gets scored |
-| `last.pt` | the latest epoch plus optimizer state, for `--resume` |
+| `best.pt` | the model with the lowest val loss; this is the one scored |
+| `last.pt` | latest epoch and optimizer state, for `--resume` |
 
-### Settings worth knowing
+### Main settings
 
 | Setting | Default | What it does |
 |---|---|---|
-| `tile` / `stride` | 512 / 256 | tile size and step; half-overlapping tiles |
 | `num_classes` | 2 | 2 for PVEL-S, 29 for Benchmark EL |
-| `defect_classes` | `[]` | which class indices are defects; empty means every class but 0 |
-| `threshold` | 0.5 | defect cut-off for two-class runs; pick it on val, never on test |
-| `defect_frac` | 0.5 | share of each batch drawn from tiles that hold a defect |
-| `alpha` | 0.5 | loss mix: `alpha` × weighted cross-entropy + (1 − `alpha`) × Dice |
-| `split_mode` | `predefined` | `predefined` uses the shipped folders; `cv` pools and folds |
+| `defect_classes` | `[]` | class indices that count as defects; empty means all but 0 |
+| `tile` / `stride` | 512 / 256 | tile size and step between tiles |
+| `resize` | none | resize whole images to this size first; none keeps full resolution |
+| `arch` | `unet` | any `segmentation_models_pytorch` architecture, e.g. `deeplabv3plus` |
+| `encoder` | `resnet34` | encoder network, ImageNet-pretrained |
+| `decoder_attention` | none | `scse` adds attention to each U-Net decoder block |
+| `class_weights` | true | median-frequency weights in the cross-entropy; false weights all classes equally |
+| `alpha` | 0.5 | loss = `alpha` × cross-entropy + (1 − `alpha`) × Dice |
+| `cldice_classes` | `[]` | thin classes also scored by clDice, e.g. `[14]` for crack; empty is off |
+| `cldice_weight` | 0 | how much clDice counts; 0 is off |
+| `cldice_add` | false | true adds clDice on top of Dice; false splits the Dice share with it |
+| `defect_frac` | 0.5 | share of each batch taken from tiles that contain a defect |
+| `threshold` | 0.5 | defect cut-off for 2-class runs; choose it on val, never on test |
+| `train_seed` | none | seeds weights, sampling and augmentation; same seed repeats a run exactly |
+| `split_mode` | `predefined` | `predefined` uses the dataset's folders; `cv` pools and folds |
 | `patience` | 10 | stop after this many epochs without a better val loss |
+
+`patience` and the learning-rate schedule count epochs. A change to `tile`,
+`stride`, `resize` or `batch_size` changes the steps per epoch, so scale
+`patience` with it (§10.8).
 
 ## Inference
 
-Run a trained two-class model on any EL photo and see which pixels it calls
-defect and which normal. No mask is needed.
+Runs a trained 2-class model on any EL image. No mask is needed.
 
 ```bash
-# One photo
 uv run python -m pv_anomaly.inference path/to/cell.jpg \
     --checkpoint kaggle/results2/pvels_predefined/best.pt
 
-# Several photos, each compared with its true mask (give masks in the same order)
-uv run python -m pv_anomaly.inference \
-    data/pv_kaggle/PVEL_S/test/defect/0840.jpg data/pv_kaggle/PVEL_S/test/defect/0879.jpg \
-    --mask data/pv_kaggle/PVEL_S/test/label/0840_mask.jpg data/pv_kaggle/PVEL_S/test/label/0879_mask.jpg \
+# with true masks, in the same order as the images
+uv run python -m pv_anomaly.inference img1.jpg img2.jpg \
+    --mask img1_mask.jpg img2_mask.jpg \
     --checkpoint kaggle/results2/pvels_predefined/best.pt
 ```
 
 | Option | Default | What it does |
 |---|---|---|
-| `images` | — | one or more photos |
-| `--checkpoint` | `results/pvels_predefined/best.pt` | the `best.pt` to load; it carries its own settings |
-| `--mask` | none | true masks, one per photo, to add a comparison panel |
-| `--out` | `predictions/` | where pictures are written |
-| `--threshold` | the run's `threshold`, else 0.5 | defect cut-off |
-| `--device` | `auto` | `cpu`, `cuda`, or `auto` |
+| `--checkpoint` | `results/pvels_predefined/best.pt` | model to load; it carries its own settings |
+| `--mask` | none | true masks, adds a comparison panel |
+| `--out` | `predictions/` | output folder |
+| `--threshold` | the run's value, else 0.5 | defect cut-off |
+| `--device` | `auto` | `cpu`, `cuda` or `auto` |
 
-For each photo it prints the defect and normal pixel counts and writes two
-files to `--out`:
+For each image it writes:
 
-- **`<name>_mask.png`** — the answer: white is defect, black is normal, same
-  size as the photo.
-- **`<name>_seg.png`** — panels side by side:
-  1. the photo
-  2. defect probability as a heatmap, blue = sure it is normal, red = sure it
-     is a defect
-  3. the photo with predicted defect pixels shaded red
-  4. with `--mask` only: green = defect found, blue = defect missed, red =
-     false alarm, grey = both say normal
+- `<name>_mask.png`: white for defect, black for normal.
+- `<name>_seg.png`: the image, a defect-probability heatmap, the image with
+  defects shaded red, and with `--mask`, a panel where green is found, blue is
+  missed and red is a false alarm.
 
-It uses the same tiling and stitching as test scoring, so what you see matches
-`metrics.json`. A 1024px photo takes a few seconds on CPU.
+It uses the same tiling as test scoring, so the pictures match
+`metrics.json`. Multi-class models are not supported here: the heatmap would
+count busbars and ribbons as defects.
 
-Only two-class models work here. With a multi-class model the heatmap counts
-every non-background class, so busbars and ribbons would show up as defects.
-
-**Slow on CPU?** Training leaves millions of weights as tiny "denormal"
-floats. GPUs do not care, but on a CPU they made one tile take 40 s instead of
-0.3 s. `load_model` zeroes them on load; anything else that runs a checkpoint
-on CPU needs the same fix.
+On CPU, `load_model` zeroes tiny "denormal" weights, which otherwise make
+inference about 100× slower.
 
 ## Scores
 
-Per-class IoU and F1, pixel AUPRC and AUROC, and how many defects were found
-grouped by defect size. Overall accuracy is left out on purpose: background is
-about 97% of pixels, so a model that finds nothing still scores 97%.
-
-**Aim for 95.5% IoU** — what Ramadan et al. report on PVEL-S with this same
-split ([Sci Rep 2026](https://doi.org/10.1038/s41598-026-57859-7)). Land far
-below it and check the data pipeline before changing the model.
-
-The size breakdown is the most useful number: big defects are easy, and the
-ones under about 600 pixels are the hard part.
-
-### PVEL-S runs in detail (shipped split, U-Net + ResNet-34)
-
-Headline numbers and the multi-class results are in [Results](#results) above;
-this section is the per-run detail. All figures here are at the default
-threshold 0.5 — see §5.3 of [EXPERIMENTS.md](EXPERIMENTS.md) for the tuned
-operating point.
-
-All three were trained on Kaggle GPUs; their folders are under `kaggle/`.
-
-| Run | Epochs run | Mean IoU | Defect IoU | Defect F1 | AUPRC |
-|---|---|---|---|---|---|
-| `results1` — 50-epoch cap | 50 | 94.21% | 90.40% | 94.96% | 0.9918 |
-| `results2` — 120-epoch cap, stopped early | 71 | 94.24% | 90.44% | 94.98% | 0.9922 |
-| `pvels_lovasz` — Lovász loss in place of Dice | 84 | 94.20% | 90.38% | 94.95% | 0.9925 |
-
-Share of defects found, by defect size in pixels:
-
-| Run | < 100 (n=8) | 100–600 (n=161) | 600–2k (n=371) | 2k–10k (n=200) | > 10k (n=180) |
-|---|---|---|---|---|---|
-| `results1` | 12.5% | 36.0% | 73.9% | 76.5% | 97.2% |
-| `results2` | 25.0% | 39.8% | 69.8% | 77.0% | 97.8% |
-| `pvels_lovasz` | 25.0% | 42.9% | 67.7% | 77.0% | 97.8% |
-
-What this says:
-
-- All three land within 0.05 points of each other on IoU, about 1.3 short of
-  the 95.5% target.
-- Big defects are solved. Small ones are not: fewer than half of those under
-  600 pixels are found.
-- The size numbers swing by several points between runs that differ only in
-  epoch cap, so a gain of that size from a single run is not evidence. Error
-  bars now exist for the multi-class task (four repeats, §10.7 of
-  [EXPERIMENTS.md](EXPERIMENTS.md)) but **not yet for these binary runs** —
-  treat differences under ~0.1 IoU here as noise until they do.
-
-The Lovász run used an `overlap: lovasz` setting that is not in this
-repository's code yet, so `configs/` cannot reproduce it.
-
-## Two choices that matter
-
-- **Tiles, not resizing.** Cracks a few pixels wide vanish if a 1024px image
-  is shrunk to 224, so images are cut into overlapping 512px tiles and the
-  predictions joined back up.
-- **Split by image, before tiling and augmentation.** Tiles from one image
-  overlap, and training images get flipped — either would leak into the test
-  set if the split came later.
+`metrics.json` holds per-class IoU and F1, mean IoU, defect mean IoU, pixel
+AUPRC and AUROC, and the share of defect regions found by size. Mean IoU
+averages only classes that have test pixels. Pixel accuracy is left out,
+because background fills most of every image.
 
 ## Layout
 
 ```
-configs/
-├── pvels.yaml          full PVEL-S run
-├── benchmark_el.yaml   29-class Benchmark EL run
-└── cpu_smoke.yaml      2-epoch check on 60 images
+configs/                 one YAML file per experiment (see Training)
 src/pv_anomaly/
-├── config.py           settings, defaults here and overrides in YAML
-├── data.py             finding images, tiling, splitting, the Dataset
-├── losses.py           weighted cross-entropy + Dice
-├── metrics.py          IoU, F1, AUPRC, defect-size breakdown
-├── train.py            training loop, test scoring, command line
-└── inference.py        run a trained model on photos, save masks and pictures
-tests/                  data and model checks
+├── config.py            settings and their defaults
+├── data.py              finding images, tiling, splitting, the Dataset
+├── losses.py            cross-entropy + Dice, class weights
+├── metrics.py           IoU, F1, AUPRC, defect-size breakdown
+├── train.py             training loop, test scoring, command line
+└── inference.py         run a trained model on images
+scripts/rescore.py       score old runs again with the current metrics
+tests/                   data, model, seed and rescore checks
+kaggle/                  result archives from Kaggle GPU runs
 ```
