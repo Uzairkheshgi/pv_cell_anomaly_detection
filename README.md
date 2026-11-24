@@ -117,6 +117,7 @@ the config file. Everything else is set in YAML, with defaults in
 | `benchmark_el_weighted.yaml` | baseline + median-frequency class weights |
 | `benchmark_el_tile512.yaml` | baseline with 512 px tiles |
 | `benchmark_el_stride256.yaml` | baseline with no tile overlap |
+| `benchmark_el_long.yaml` | baseline trained up to 250 epochs |
 | `benchmark_el_short.yaml` | baseline cut to 15 epochs (training-budget control) |
 | `benchmark_el_160.yaml` | resized to 160 × 160, epoch-based patience (stops too early) |
 | `benchmark_el_160_long.yaml` | resized to 160 × 160, patience matched in steps |
