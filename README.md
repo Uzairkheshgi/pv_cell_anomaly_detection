@@ -121,6 +121,9 @@ the config file. Everything else is set in YAML, with defaults in
 | `benchmark_el_short.yaml` | baseline cut to 15 epochs (training-budget control) |
 | `benchmark_el_160.yaml` | resized to 160 × 160, epoch-based patience (stops too early) |
 | `benchmark_el_160_long.yaml` | resized to 160 × 160, patience matched in steps |
+| `benchmark_el_resnet50.yaml` | baseline with a ResNet-50 encoder |
+| `benchmark_el_effnet_b4.yaml` | baseline with an EfficientNet-B4 encoder |
+| `benchmark_el_convnext_t.yaml` | baseline with a ConvNeXt-Tiny encoder |
 | `benchmark_el_dlv3p.yaml` | baseline with DeepLabv3+ instead of U-Net |
 | `benchmark_el_dlv3p_weighted.yaml` | DeepLabv3+ with median-frequency weights |
 | `benchmark_el_cldice.yaml` | baseline + clDice on crack and gridline, mixed 50/50 with Dice |

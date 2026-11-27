@@ -1,0 +1,22 @@
+# Baseline with the ResNet-50 encoder (deeper version of the baseline's ResNet-34) instead of ResNet-34.
+name: benchmark_el_resnet50
+root: data/benchmark_el
+splits: [train, val, test]
+image_dir: images
+mask_dir: masks
+image_glob: "*.png"
+mask_suffix: ""
+
+# 29 classes: 13 features + 16 defects
+num_classes: 29
+defect_classes: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28]
+
+split_mode: predefined  # dataset ships its own val/test split
+tile: 256  # 9 tiles per 512 image
+stride: 128
+
+epochs: 120
+batch_size: 8
+encoder: resnet50  # ImageNet-pretrained
+class_weights: false  # weighting costs ~18 mIoU here
+patience: 20  # val set is small, so loss is noisy
