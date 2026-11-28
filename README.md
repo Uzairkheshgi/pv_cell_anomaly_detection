@@ -31,7 +31,6 @@ Test split of 360 images, U-Net + ResNet-34:
 | class weights, threshold 0.90 chosen on val (1 run) | 92.01 |
 | reference model (1 run, 160 × 160, no separate test split) | 93.89 |
 
-Full results and analysis are in [EXPERIMENTS.md](EXPERIMENTS.md).
 
 ## Setup
 
@@ -124,6 +123,9 @@ the config file. Everything else is set in YAML, with defaults in
 | `benchmark_el_resnet50.yaml` | baseline with a ResNet-50 encoder |
 | `benchmark_el_effnet_b4.yaml` | baseline with an EfficientNet-B4 encoder |
 | `benchmark_el_convnext_t.yaml` | baseline with a ConvNeXt-Tiny encoder |
+| `benchmark_el_aug_off.yaml` | baseline with no training augmentation |
+| `benchmark_el_aug_strong.yaml` | baseline with stronger augmentation (gamma, contrast, blur, JPEG) |
+| `benchmark_el_copy_paste.yaml` | baseline with copy-paste of rings, splice and star regions |
 | `benchmark_el_dlv3p.yaml` | baseline with DeepLabv3+ instead of U-Net |
 | `benchmark_el_dlv3p_weighted.yaml` | DeepLabv3+ with median-frequency weights |
 | `benchmark_el_cldice.yaml` | baseline + clDice on crack and gridline, mixed 50/50 with Dice |

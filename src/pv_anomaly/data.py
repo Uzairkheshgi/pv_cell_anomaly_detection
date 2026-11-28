@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -233,7 +234,7 @@ def make_split(records, mode, n_folds, fold, val_frac, seed):
     return train, val, test
 
 
-def augmentations(train: bool) -> A.Compose:
+def augmentations(train: bool, mode: str = "basic") -> A.Compose:
     """Build the image transforms.
 
     Training gets flips, quarter turns, and mild brightness and noise changes.
@@ -242,23 +243,73 @@ def augmentations(train: bool) -> A.Compose:
 
     Args:
         train: True for training transforms, False to only normalise.
+        mode: "basic" as above, "off" for none, or "strong" for basic plus
+            gamma, stronger brightness and contrast, and mild blur or JPEG,
+            which EL exposure and image quality really vary in. Blur is kept
+            to a 3 px kernel so 1-2 px cracks survive.
 
     Returns:
         A pipeline that takes `image` and `mask` together.
+
+    Raises:
+        ValueError: If `mode` is unknown.
     """
     norm = A.Normalize(mean=MEAN, std=STD)
-    if not train:
+    if not train or mode == "off":
         return A.Compose([norm])
-    return A.Compose(
-        [
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.5),
-            A.RandomRotate90(p=0.5),
+    geometric = [
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomRotate90(p=0.5),
+    ]
+    if mode == "basic":
+        photometric = [
             A.RandomBrightnessContrast(0.15, 0.15, p=0.5),
             A.GaussNoise(p=0.2),
-            norm,
         ]
-    )
+    elif mode == "strong":
+        photometric = [
+            A.RandomBrightnessContrast(0.3, 0.3, p=0.7),
+            A.RandomGamma((70, 150), p=0.5),
+            A.GaussNoise(p=0.3),
+            A.OneOf(
+                [
+                    A.GaussianBlur(blur_limit=(3, 3), sigma_limit=(0.3, 0.8)),
+                    A.ImageCompression(quality_range=(60, 95)),
+                ],
+                p=0.3,
+            ),
+        ]
+    else:
+        raise ValueError(f"unknown augment {mode!r}; expected 'off', 'basic' or 'strong'")
+    return A.Compose(geometric + photometric + [norm])
+
+
+def defect_regions(
+    mask: np.ndarray, classes: tuple[int, ...], record_idx: int
+) -> list[tuple[int, int, int, np.ndarray, int]]:
+    """Find every connected region of the given classes in one mask.
+
+    Args:
+        mask: Class index per pixel.
+        classes: Which classes to look for.
+        record_idx: The image's number, stored with each region.
+
+    Returns:
+        One (image number, top, left, region mask, class) entry per region.
+        The region mask covers the region's bounding box and is True on the
+        region's own pixels only.
+    """
+    regions = []
+    for label in classes:
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(
+            (mask == label).astype(np.uint8), connectivity=8
+        )
+        for k in range(1, n):
+            left, top, w, h = stats[k, :4]
+            region = labels[top : top + h, left : left + w] == k
+            regions.append((record_idx, int(top), int(left), region, label))
+    return regions
 
 
 class Tiles(Dataset):
@@ -272,6 +323,9 @@ class Tiles(Dataset):
         tiles: One (record index, y, x) entry per tile.
         defect: Indices of tiles holding at least one defect pixel. The training
             sampler uses these to balance batches.
+        regions: Defect regions for copy-paste, one (image number, top, left,
+            region mask, class) entry per connected region. Empty unless this
+            is a training set with `cfg.copy_paste` on.
     """
 
     def __init__(self, records: list[Record], cfg, train: bool) -> None:
@@ -283,7 +337,7 @@ class Tiles(Dataset):
             train: Whether to apply training augmentation.
         """
         self.records, self.cfg, self.train = records, cfg, train
-        self.transform = augmentations(train)
+        self.transform = augmentations(train, cfg.augment)
         # Masks we have already loaded, kept by image id so we do not read the
         # same file twice. Only the most recent ones are kept, because each
         # mask is about 1 MB.
@@ -292,8 +346,12 @@ class Tiles(Dataset):
         # it: (image number, top, left).
         self.tiles: list[tuple[int, int, int]] = []
         self.defect: list[int] = []
+        self.regions: list[tuple[int, int, int, np.ndarray, int]] = []
+        pasting = train and cfg.copy_paste > 0
         for i, record in enumerate(records):
             mask = self.mask(record)
+            if pasting:
+                self.regions += defect_regions(mask, cfg.copy_paste_classes, i)
             for y, x in tile_positions(*mask.shape[:2], cfg.tile, cfg.stride):
                 tile = crop(mask, y, x, cfg.tile)
                 if defect_pixels(tile, cfg.defect_classes).any():
@@ -393,14 +451,44 @@ class Tiles(Dataset):
         record_idx, y, x = self.tiles[i]
         record = self.records[record_idx]
         tile = self.cfg.tile
-        out = self.transform(
-            image=crop(self.image(record), y, x, tile),
-            mask=crop(self.mask(record), y, x, tile),
-        )
+        image = crop(self.image(record), y, x, tile)
+        mask = crop(self.mask(record), y, x, tile)
+        if self.regions and random.random() < self.cfg.copy_paste:
+            image, mask = self.paste(image, mask)
+        out = self.transform(image=image, mask=mask)
         return (
             torch.from_numpy(out["image"].transpose(2, 0, 1).copy()).float(),
             torch.from_numpy(out["mask"].copy()).long(),
         )
+
+    def paste(self, image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Paste one random defect region into a tile, pixels and label together.
+
+        Only the region's own pixels are copied, so the surrounding cell is
+        kept. A region larger than the tile is cut to a tile-sized window
+        first. Runs before augmentation, so the pasted region is flipped and
+        rotated with the rest of the tile.
+
+        Args:
+            image: The tile, (tile, tile, 3).
+            mask: Its class indices, (tile, tile).
+
+        Returns:
+            New copies of the image and mask with the region pasted in.
+        """
+        record_idx, top, left, region, label = random.choice(self.regions)
+        tile = self.cfg.tile
+        h, w = min(region.shape[0], tile), min(region.shape[1], tile)
+        dy = random.randint(0, region.shape[0] - h)
+        dx = random.randint(0, region.shape[1] - w)
+        region = region[dy : dy + h, dx : dx + w]
+        source = self.image(self.records[record_idx])
+        source = source[top + dy : top + dy + h, left + dx : left + dx + w]
+        y, x = random.randint(0, tile - h), random.randint(0, tile - w)
+        image, mask = image.copy(), mask.copy()
+        image[y : y + h, x : x + w][region] = source[region]
+        mask[y : y + h, x : x + w][region] = label
+        return image, mask
 
     def class_pixels(self) -> np.ndarray:
         """Count pixels per class, for the loss weights.

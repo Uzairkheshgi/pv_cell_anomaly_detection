@@ -80,6 +80,16 @@ class Config:
     resume: bool = False  # pick up from last.pt if the run was interrupted
     defect_frac: float = 0.5  # share of each batch drawn from defect tiles
 
+    # augmentation, training tiles only
+    # "off": none. "basic": flips, quarter turns, mild brightness and noise.
+    # "strong": basic plus gamma, stronger brightness and contrast, mild blur
+    # and JPEG.
+    augment: str = "basic"
+    # Chance per training tile of pasting one defect region of these classes,
+    # cut from a training image, at a random place in the tile. 0 is off.
+    copy_paste: float = 0.0
+    copy_paste_classes: tuple[int, ...] = ()
+
     @classmethod
     def load(cls, path: str | Path) -> Config:
         """Read a YAML file, filling in any setting it leaves out.
@@ -103,6 +113,7 @@ class Config:
         cfg.splits = tuple(cfg.splits)
         cfg.defect_classes = tuple(cfg.defect_classes)
         cfg.cldice_classes = tuple(cfg.cldice_classes)
+        cfg.copy_paste_classes = tuple(cfg.copy_paste_classes)
         return cfg
 
     def as_dict(self) -> dict:

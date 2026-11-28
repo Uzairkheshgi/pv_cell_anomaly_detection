@@ -6,7 +6,9 @@ import pytest
 from pv_anomaly.data import (
     Record,
     Tiles,
+    augmentations,
     crop,
+    defect_regions,
     index_dataset,
     make_split,
     stitch,
@@ -217,3 +219,50 @@ def test_mask_cache_is_bounded(dataset, cfg):
     # An evicted mask must still be readable, and identical.
     first = ds.records[0]
     assert ds.mask(first).sum() == ds.mask(ds.records[-1]).sum() > 0
+
+
+# --- augmentation ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["off", "basic", "strong"])
+def test_augment_modes_keep_shapes_and_labels(mode):
+    rng = np.random.default_rng(0)
+    image = rng.integers(0, 255, (64, 64, 3), dtype=np.uint8)
+    mask = np.zeros((64, 64), np.uint8)
+    mask[10:20, 10:20] = 3
+    out = augmentations(True, mode)(image=image, mask=mask)
+    assert out["image"].shape == (64, 64, 3)
+    assert set(np.unique(out["mask"])) == {0, 3} and (out["mask"] == 3).sum() == 100
+
+
+def test_unknown_augment_mode_is_rejected():
+    with pytest.raises(ValueError):
+        augmentations(True, "extreme")
+
+
+def test_defect_regions_finds_each_region_separately():
+    mask = np.zeros((32, 32), np.uint8)
+    mask[2:4, 2:10] = 5
+    mask[20:30, 20:22] = 5
+    mask[0:3, 28:31] = 7
+    regions = defect_regions(mask, (5,), record_idx=4)
+    assert len(regions) == 2
+    assert sorted(int(r[3].sum()) for r in regions) == [16, 20]
+    assert all(r[0] == 4 and r[4] == 5 for r in regions)
+
+
+def test_copy_paste_copies_region_pixels_and_label(cfg, dataset):
+    cfg.copy_paste, cfg.copy_paste_classes, cfg.augment = 1.0, (1,), "off"
+    ds = Tiles(index_dataset(dataset, ("train",)), cfg, train=True)
+    assert len(ds.regions) == 6  # one 20x20 block per training image
+    image = np.zeros((128, 128, 3), np.uint8)
+    mask = np.zeros((128, 128), np.uint8)
+    pasted_image, pasted_mask = ds.paste(image, mask)
+    assert pasted_mask.sum() == 400
+    assert pasted_image[pasted_mask == 1].any() and not pasted_image[pasted_mask == 0].any()
+    assert not mask.any()  # the input tile is not changed in place
+
+
+def test_copy_paste_is_off_for_eval_sets(cfg, dataset):
+    cfg.copy_paste, cfg.copy_paste_classes = 1.0, (1,)
+    assert not Tiles(index_dataset(dataset), cfg, train=False).regions
